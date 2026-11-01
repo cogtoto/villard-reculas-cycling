@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Vélo Virtuel</string>
+    <string name="title_activity_main">Vélo Virtuel</string>
+    <string name="package_name">fr.cognet.velovirtuel</string>
+    <string name="custom_url_scheme">fr.cognet.velovirtuel</string>
+</resources>

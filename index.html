@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vélo virtuel — Villard-Reculas</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; font-family: system-ui, sans-serif; }
+      #hud {
+        position: fixed; top: 12px; left: 12px; z-index: 2;
+        color: #e8eefc; background: rgba(10,14,28,.65); padding: 10px 14px;
+        border-radius: 10px; min-width: 180px; backdrop-filter: blur(6px);
+        font-size: 14px; line-height: 1.5;
+      }
+      #hud strong { color: #7aa2f7; }
+      #hud .zone { display: inline-block; min-width: 2.2em; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-weight: 700; text-align: center; background: #555; color: #fff; }
+      #hint { position: fixed; bottom: 12px; left: 12px; color: #9aa4bf; font-size: 12px; z-index: 2; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <div>Puissance : <strong id="watts">—</strong> W <span id="zone" class="zone">—</span></div>
+      <div>FTP : <strong id="ftp">—</strong> W <span id="pctftp" style="opacity:.75"></span></div>
+      <div>Cadence : <strong id="cadence">—</strong> rpm</div>
+      <div>Vitesse : <strong id="speed">—</strong> km/h</div>
+      <div>Pente : <strong id="grade">—</strong> % (GPX) · Alt : <strong id="alt">—</strong> m</div>
+      <div>Distance : <strong id="dist">—</strong> km</div>
+      <div><button id="ble-btn" style="margin:4px 0;padding:4px 8px;border-radius:6px;border:0;background:#2e86de;color:#fff;font-weight:600">Connecter capteur BLE</button> <button id="zwift-btn" style="margin:4px 0;padding:4px 8px;border-radius:6px;border:0;background:#fc6719;color:#fff;font-weight:600">Zwift Click/Play</button></div>
+      <div>Vitesse virtuelle : <strong id="gear">—</strong> / 24 <span style="opacity:.6">(+ / −)</span></div>
+      <div>Source : <strong id="source">—</strong></div>
+    </div>
+    <div id="hint">Trajet réel Villard-Reculas (Oisans) : descente + montée (GPX Strava, ~26,5 km, 718–1495 m) · mock par défaut · BLE si un capteur FTMS/Power est détecté (VELO_BLE=0 pour forcer mock)</div>
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>
