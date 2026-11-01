@@ -1,0 +1,11 @@
+{
+ "source": "AWS Terrain Tiles (Terrarium) z13 \u2014 SRTM/Copernicus/IGN",
+ "latN": 45.165,
+ "lonW": 5.965,
+ "step": 0.00025,
+ "nx": 532,
+ "ny": 428,
+ "min": 702.6921997070312,
+ "max": 2822.031494140625,
+ "format": "int16 LE, row 0 = north"
+}

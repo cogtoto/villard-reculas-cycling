@@ -1,0 +1,7 @@
+{
+  "appId": "fr.cognet.velovirtuel",
+  "appName": "Vélo Virtuel",
+  "webDir": "dist",
+  "android": { "allowMixedContent": true },
+  "plugins": { "BluetoothLe": { "displayStrings": { "scanning": "Recherche…", "cancel": "Annuler", "availableDevices": "Capteurs disponibles", "noDeviceFound": "Aucun capteur" } } }
+}
