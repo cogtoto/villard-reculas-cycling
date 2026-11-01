@@ -61,6 +61,49 @@ export function simplify(pts, maxPts = 1200) {
   return out;
 }
 
+// Fusion des passages superposés (aller-retour) : densifie puis colle chaque point
+// proche (< snapDist) d'un segment parcouru plus tôt sur ce segment → une seule route.
+// Les points collés reçoivent dup=true (buildRoad ne redessine pas ces tronçons).
+export function mergeOverlaps(pts, snapDist = 9, step = 8, minGap = 150) {
+  const dense = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const A = pts[i - 1], B = pts[i], L = Math.hypot(B.x - A.x, B.z - A.z), k = Math.max(1, Math.ceil(L / step));
+    for (let j = 1; j <= k; j++) { const t = j / k; dense.push({ x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t, z: A.z + (B.z - A.z) * t }); }
+  }
+  const cell = 40, grid = new Map(), key = (cx, cz) => cx + ',' + cz;
+  const segs = []; // segments de référence (non dupliqués) : {A,B,c}
+  const addSeg = (A, B, c) => {
+    const id = segs.push({ A, B, c }) - 1;
+    const x0 = Math.floor(Math.min(A.x, B.x) / cell), x1 = Math.floor(Math.max(A.x, B.x) / cell);
+    const z0 = Math.floor(Math.min(A.z, B.z) / cell), z1 = Math.floor(Math.max(A.z, B.z) / cell);
+    for (let x = x0; x <= x1; x++) for (let z = z0; z <= z1; z++) { const kk = key(x, z); (grid.get(kk) || grid.set(kk, []).get(kk)).push(id); }
+  };
+  const out = [{ ...dense[0] }];
+  let c = 0;
+  for (let i = 1; i < dense.length; i++) {
+    const P = dense[i];
+    c += Math.hypot(P.x - dense[i - 1].x, P.z - dense[i - 1].z);
+    let best = snapDist, bp = null;
+    const cx = Math.floor(P.x / cell), cz = Math.floor(P.z / cell);
+    for (let x = cx - 1; x <= cx + 1; x++) for (let z = cz - 1; z <= cz + 1; z++) for (const id of grid.get(key(x, z)) || []) {
+      const { A, B, c: sc } = segs[id];
+      if (c - sc < minGap) continue; // tronçon immédiatement précédent : pas un chevauchement
+      const dx = B.x - A.x, dz = B.z - A.z, L2 = dx * dx + dz * dz || 1e-9;
+      // même axe de route uniquement (aller ou retour) : évite de coller deux lacets voisins
+      const pv = dense[i - 1], mx = P.x - pv.x, mz = P.z - pv.z, ml = Math.hypot(mx, mz) || 1;
+      if (Math.abs((mx * dx + mz * dz) / (ml * Math.sqrt(L2))) < 0.8) continue;
+      const t = Math.max(0, Math.min(1, ((P.x - A.x) * dx + (P.z - A.z) * dz) / L2));
+      const qx = A.x + dx * t, qz = A.z + dz * t, d = Math.hypot(P.x - qx, P.z - qz);
+      if (d < best) { best = d; bp = { x: qx, y: A.y + (B.y - A.y) * t, z: qz, dup: true }; }
+    }
+    const Q = bp || { x: P.x, y: P.y, z: P.z };
+    const prev = out[out.length - 1];
+    if (!Q.dup && !prev.dup) addSeg(prev, Q, c);
+    if (Math.hypot(Q.x - prev.x, Q.z - prev.z) > 0.3) out.push(Q); else if (Q.dup) prev.dup = prev.dup || false;
+  }
+  return out;
+}
+
 // Altitude lissée (moyenne glissante) puis distances cumulées.
 export function buildTrack(raw, maxPts = 1200) {
   const local = toLocal(raw);
@@ -70,7 +113,7 @@ export function buildTrack(raw, maxPts = 1200) {
     for (let j = Math.max(0, i - w); j <= Math.min(local.length - 1, i + w); j++) { s += local[j].y; n++; }
     return { ...p, y: s / n };
   });
-  const pts = simplify(sm, maxPts);
+  const pts = mergeOverlaps(simplify(sm, maxPts));
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z));
   return { pts, cum, length: cum[cum.length - 1], rawCount: raw.length, origin: local.origin };

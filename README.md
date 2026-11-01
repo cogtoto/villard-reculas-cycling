@@ -1,31 +1,21 @@
-# Vélo virtuel (MVP)
+# Villard-Reculas Virtual Cycling
 
-Three.js + WebSocket. Capteurs simulés pour l’instant.
+3D virtual cycling app for Android that connects to your home trainer via Bluetooth. Ride through realistic terrain with physics-based simulation.
 
-## Lancer
+## Download & Install (Android)
 
-```bash
-cd ~/projets/velo-virtuel
-npm install
-npm run dev
-```
+1. **Download the APK** from the [Releases page](https://github.com/cogtoto/villard-reculas-cycling/releases)
+2. **Enable "Install from unknown sources"** in your Android settings
+3. **Install** the APK file
+4. **Rotate to landscape mode** for the best experience
+5. **Connect your HomeTrainer** via Bluetooth (supports FTMS, Cycling Power, and Cadence/Speed sensors)
+6. **Use +/− buttons** to shift gears during your ride
+7. **Press Stop** when finished to see your ride summary
 
-- UI : http://localhost:5173
-- Capteurs : ws://localhost:8787
+## Features
 
-Prochaine étape : brancher le BLE à la place du mock dans `server/index.js`.
-
-## BLE
-
-Par défaut le serveur scanne le Bluetooth (FTMS / Cycling Power / CSC).
-S’il ne trouve rien, le mock continue.
-
-```bash
-# forcer le mock
-VELO_BLE=0 npm run server
-
-# besoin souvent du groupe bluetooth + relogin
-sudo usermod -aG bluetooth $USER
-```
-
-Sur ce Pavilion (Broadcom), le BLE peut rester vide : utilise alors Companion bridge plus tard, ou un dongle BT 5.
+- Real terrain simulation with 3D graphics
+- Bluetooth connectivity for home trainers
+- Physics-based cycling mechanics
+- Interactive gear shifting
+- Ride statistics and summaries

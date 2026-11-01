@@ -378,13 +378,13 @@ export function addVegetation(scene, track, terrain) {
 }
 
 // ---------- route ----------
-export function buildRoad(scene, track, width = 4) {
+export function buildRoad(scene, track, width = 4, terrain = null) {
   const { pts, cum } = track, n = pts.length;
   const asphalt = canvasTex(512, (g, s) => {
     const img = g.createImageData(s, s);
     for (let i = 0; i < s * s; i++) {
       const x = i % s, y = (i / s) | 0;
-      const v = 88 + fbm(x * 0.05, y * 0.05) * 22 + Math.random() * 18 + (Math.random() < 0.01 ? 35 : 0); // asphalte montagne ≈ #6b6e73
+      const v = 52 + fbm(x * 0.05, y * 0.05) * 16 + Math.random() * 12 + (Math.random() < 0.01 ? 30 : 0); // asphalte sombre, bien lisible sur l'herbe
       img.data.set([v, v + 2, v + 6, 255], i * 4);
     }
     g.putImageData(img, 0, 0);
@@ -395,7 +395,10 @@ export function buildRoad(scene, track, width = 4) {
       const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
       let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
       const nx = -tz, nz = tx, p = pts[i];
-      pos.set([p.x + nx * offA, p.y + yLift, p.z + nz * offA, p.x + nx * offB, p.y + yLift, p.z + nz * offB], i * 6);
+      const ax = p.x + nx * offA, az = p.z + nz * offA, bx = p.x + nx * offB, bz = p.z + nz * offB;
+      // jamais sous le terrain : max(altitude tracé, sol sous le bord / l'axe)
+      const gy = terrain ? Math.max(p.y, terrain.heightAt(p.x, p.z), terrain.heightAt(ax, az), terrain.heightAt(bx, bz)) : p.y;
+      pos.set([ax, gy + yLift, az, bx, gy + yLift, bz], i * 6);
       uv.set([0, cum[i] / vScale, 1, cum[i] / vScale], i * 4);
       if (i < n - 1) { const k = i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
     }
@@ -406,14 +409,14 @@ export function buildRoad(scene, track, width = 4) {
     return g;
   };
   const h = width / 2, side = THREE.DoubleSide;
-  const road = new THREE.Mesh(ribbon(h, -h, 0.06, 6), new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.92, metalness: 0, side }));
-  road.receiveShadow = true; scene.add(road);
+  const road = new THREE.Mesh(ribbon(h, -h, 0.4, 6), new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.92, metalness: 0, side, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  road.receiveShadow = true; road.frustumCulled = false; scene.add(road);
   // bas-côtés en herbe légèrement plus bas
-  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x7c8a45, roughness: 1, side }); // bas-côtés herbeux
-  scene.add(new THREE.Mesh(ribbon(h + 0.8, h, 0.03, 6), shoulderMat), new THREE.Mesh(ribbon(-h, -h - 0.8, 0.03, 6), shoulderMat));
+  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a8f7a, roughness: 1, side, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }); // bas-côtés herbeux
+  scene.add(new THREE.Mesh(ribbon(h + 0.8, h, 0.3, 6), shoulderMat), new THREE.Mesh(ribbon(-h, -h - 0.8, 0.3, 6), shoulderMat));
   // lignes latérales continues + axe pointillé (texture)
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xefefe6, roughness: 0.6, side });
-  scene.add(new THREE.Mesh(ribbon(h - 0.15, h - 0.27, 0.075, 6), lineMat), new THREE.Mesh(ribbon(-h + 0.27, -h + 0.15, 0.075, 6), lineMat));
+  const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x555555, roughness: 0.6, side, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+  scene.add(new THREE.Mesh(ribbon(h - 0.15, h - 0.3, 0.43, 6), lineMat), new THREE.Mesh(ribbon(-h + 0.3, -h + 0.15, 0.43, 6), lineMat));
   const dash = canvasTex(64, (g, s) => { g.clearRect(0, 0, s, s); g.fillStyle = '#f0f0e8'; g.fillRect(0, 0, s, s * 0.4); });
   dash.colorSpace = THREE.SRGBColorSpace;
   // (pas d'axe central pointillé : route de montagne étroite, comme sur place)

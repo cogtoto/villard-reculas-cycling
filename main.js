@@ -95,7 +95,7 @@ let routeGrade = 0; // pente GPX courante (mise à jour dans tick)
 const TRAINER_GRADE_SCALE = 0.5;
 const trainerGrade = () => routeGrade * TRAINER_GRADE_SCALE + (gear - GEAR_NEUTRAL) * GRADE_PER_GEAR;
 const pushTrainer = () => { try { sensors.setSimulation(trainerGrade()); } catch { /* capteurs pas encore initialisés */ } };
-const shift = (d) => { gear = Math.max(1, Math.min(GEARS, gear + d)); const g = document.getElementById('gear'); if (g) g.textContent = gear; const sg = document.getElementById('shift-gear'); if (sg) sg.textContent = gear; if (d) pushTrainer(); };
+const shift = (d) => { if (d && typeof S !== 'undefined') S.shifts++; gear = Math.max(1, Math.min(GEARS, gear + d)); const g = document.getElementById('gear'); if (g) g.textContent = gear; const sg = document.getElementById('shift-gear'); if (sg) sg.textContent = gear; if (d) pushTrainer(); };
 addEventListener('keydown', (e) => { if (e.key === '+' || e.key === 'ArrowUp' && e.shiftKey) shift(1); if (e.key === '-' || e.key === 'ArrowDown' && e.shiftKey) shift(-1); });
 const sensors = createSensors((msg) => {
     state = { ...state, ...msg };
@@ -118,6 +118,63 @@ if (bleBtn) bleBtn.onclick = async () => {
   catch (e) { console.warn('BLE', e); bleBtn.textContent = 'BLE : ' + (e.message || e).toString().slice(0, 40); bleBtn.disabled = false; }
 };
 
+// --- Statistiques de sortie + bouton Stop ---
+const S = { elapsed: 0, moving: 0, dist: 0, maxV: 0, gain: 0, loss: 0, lastY: null, wSum: 0, wMax: 0, w30: [], np4: 0, npN: 0, npAcc: 0, npT: 0,
+  cadSum: 0, cadT: 0, zones: new Array(7).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
+function recordStats(dt, here) {
+  S.elapsed += dt;
+  const v = physV, w = state.watts || 0;
+  if (v > 0.5) S.moving += dt;
+  S.dist += v * dt; S.maxV = Math.max(S.maxV, v);
+  if (S.lastY != null) { const dy = here.pos.y - S.lastY; if (dy > 0) S.gain += dy; else S.loss -= dy; }
+  S.lastY = here.pos.y;
+  S.wSum += w * dt; S.wMax = Math.max(S.wMax, w);
+  S.npAcc += w * dt; S.npT += dt; // moyenne glissante 30 s par tranches d'1 s
+  if (S.npT >= 1) { S.w30.push(S.npAcc / S.npT); S.npAcc = 0; S.npT = 0; if (S.w30.length > 30) S.w30.shift();
+    if (S.w30.length === 30) { const a = S.w30.reduce((s, x) => s + x, 0) / 30; S.np4 += a ** 4; S.npN++; } }
+  if (state.cadence > 0) { S.cadSum += state.cadence * dt; S.cadT += dt; }
+  S.zones[POWER_ZONES.indexOf(POWER_ZONES.find((z) => (w / FTP_W) * 100 < z.max))] += dt;
+  S.gearSum += gear * dt; S.gearMin = Math.min(S.gearMin, gear); S.gearMax = Math.max(S.gearMax, gear);
+}
+const fmtT = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + 'h ' : '') + String(m).padStart(h ? 2 : 1, '0') + 'm ' + String(x).padStart(2, '0') + 's'; };
+const ZONE_NAMES = ['Easy recovery', 'Endurance', 'Tempo', 'Threshold', 'VO2 max', 'Anaerobic', 'Sprint'];
+function showStats() {
+  const kmh = (ms) => (ms * 3.6).toFixed(1);
+  const avgV = S.moving ? S.dist / S.moving : 0, avgW = S.elapsed ? S.wSum / S.elapsed : 0;
+  const np = S.npN ? Math.pow(S.np4 / S.npN, 0.25) : null;
+  const card = (label, value, sub = '') => `<div class="st-card"><div class="st-l">${label}</div><div class="st-v">${value}</div>${sub ? `<div class="st-s">${sub}</div>` : ''}</div>`;
+  const tot = S.zones.reduce((a, b) => a + b, 0) || 1;
+  const zones = POWER_ZONES.map((z, i) => { const p = (S.zones[i] / tot) * 100;
+    return `<div class="st-z"><span class="st-zt" style="background:${z.bg};color:${z.fg}">${z.z}</span><span class="st-zn">${ZONE_NAMES[i]}</span><span class="st-zb"><i style="width:${p.toFixed(1)}%;background:${z.bg}"></i></span><span class="st-zp">${fmtT(S.zones[i])}</span></div>`; }).join('');
+  document.getElementById('stats-body').innerHTML = `
+    <div class="st-sec">Time &amp; distance</div><div class="st-grid">
+      ${card('Riding time', fmtT(S.moving), 'Total: ' + fmtT(S.elapsed))}
+      ${card('Distance', (S.dist / 1000).toFixed(2) + ' km')}
+      ${card('Average speed', kmh(avgV) + ' km/h')}
+      ${card('Top speed', kmh(S.maxV) + ' km/h')}</div>
+    <div class="st-sec">Climbing</div><div class="st-grid">
+      ${card('Climbed', Math.round(S.gain) + ' m')}
+      ${card('Descended', Math.round(S.loss) + ' m')}
+      ${card('Average slope', S.dist > 50 ? (((S.gain - S.loss) / S.dist) * 100).toFixed(1) + ' %' : '—', 'uphill minus downhill')}</div>
+    <div class="st-sec">Effort</div><div class="st-grid">
+      ${card('Average power', Math.round(avgW) + ' W', Math.round((avgW / FTP_W) * 100) + ' % of your FTP')}
+      ${card('Max power', Math.round(S.wMax) + ' W')}
+      ${card('Normalized power', np ? Math.round(np) + ' W' : '—', 'how hard it really felt')}
+      ${card('Average cadence', S.cadT ? Math.round(S.cadSum / S.cadT) + ' rpm' : '—', 'pedal turns per minute')}
+      ${card('Virtual gear', S.elapsed ? (S.gearSum / S.elapsed).toFixed(1) : '—', S.elapsed ? `avg · range ${S.gearMin}–${S.gearMax} · ${S.shifts} shifts` : '')}</div>
+    <div class="st-sec">Time in each power zone <span style="opacity:.6;font-weight:400">(your FTP: ${FTP_W} W)</span></div>${zones}`;
+  document.getElementById('stats').style.display = 'flex';
+}
+{
+  const $ = (id) => document.getElementById(id), confirmBox = $('stop-confirm');
+  let wasRiding = false;
+  $('stop-btn').onclick = () => { if (!rideStarted) return; wasRiding = true; rideStarted = false; confirmBox.style.display = 'flex'; };
+  $('stop-no').onclick = () => { confirmBox.style.display = 'none'; rideStarted = wasRiding; };
+  $('stop-yes').onclick = () => { confirmBox.style.display = 'none'; showStats(); };
+  $('stats-resume').onclick = () => { $('stats').style.display = 'none'; rideStarted = true; };
+  $('stats-end').onclick = () => location.reload(); // retour à l'écran d'accueil, nouvelle sortie
+}
+
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
@@ -133,12 +190,16 @@ function tick() {
     const here = sampleTrack(track, distanceM);
     physV = stepSpeed(physV, state.watts, here.gradePct, dt, here.pos.y);
     hud.speed.textContent = (physV * 3.6).toFixed(1);
-    if (rideStarted) distanceM += physV * dt;
+    if (rideStarted) { distanceM += physV * dt; recordStats(dt, here); }
     const now = performance.now();
     if (now - lastSent > 1000) { sensors.sendRoute(here.gradePct, here.pos.y); routeGrade = here.gradePct; pushTrainer(); lastSent = now; }
     if (distanceM >= track.length) distanceM = 0; // boucle : retour au départ (Villard-Reculas)
     const { pos, dir, gradePct } = sampleTrack(track, distanceM);
-    rider.position.set(pos.x, pos.y + 0.02, pos.z);
+    // même hauteur que la chaussée (buildRoad : max tracé / sol sous l'axe et les bords + 0,40 m)
+    let roadY = pos.y;
+    if (groundAt) { const nx = -dir.z * 2, nz = dir.x * 2;
+      roadY = Math.max(pos.y, groundAt(pos.x, pos.z), groundAt(pos.x + nx, pos.z + nz), groundAt(pos.x - nx, pos.z - nz)); }
+    rider.position.set(pos.x, roadY + 0.42, pos.z);
     riderModel.update(dt, state.cadence, physV);
     if (updateMinimap) updateMinimap(pos, dir);
     rider.rotation.y = Math.atan2(dir.x, dir.z); // tangent à la route
@@ -205,8 +266,8 @@ Promise.all([
     const dem = { meta: demMeta, data: new Int16Array(demBuf) };
     track = buildTrack(parseGpx(txt), 1200);
     console.log(`GPX : ${track.rawCount} pts bruts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
-    buildRoad(scene, track);
     const terrain = buildAlpineTerrain(scene, track, dem);
+    buildRoad(scene, track, 4, terrain);
     groundAt = terrain.heightAt;
     updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, ZONE_COLORS);
     addClouds(scene, terrain.center, terrain.span * 3, 3200);
