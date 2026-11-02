@@ -60,7 +60,6 @@ let rideStarted = false;
   const showRoute = () => { 
     document.getElementById('ftp-step').style.display = 'none'; 
     document.getElementById('route-step').style.display = ''; 
-    updateRouteInfo();
   };
   if (localStorage.getItem(FTP_KEY)) showRoute();
   document.getElementById('ftp-ok').onclick = () => {
@@ -69,23 +68,30 @@ let rideStarted = false;
     FTP_W = v; localStorage.setItem(FTP_KEY, String(v)); document.getElementById('ftp').textContent = v; showRoute();
   };
   
-  // Route selection
-  const updateRouteInfo = () => {
-    selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
-    const route = ROUTES[selectedRoute];
-    document.getElementById('route-name').textContent = route.name;
-    document.getElementById('route-desc').textContent = route.description;
-  };
-  document.querySelectorAll('input[name="route"]').forEach(el => {
-    el.addEventListener('change', updateRouteInfo);
-    if (el.value === selectedRoute) el.checked = true;
-  });
-  updateRouteInfo();
+  // Route selection - restore last choice
+  const savedRoute = localStorage.getItem(ROUTE_KEY);
+  if (savedRoute) {
+    const radio = document.querySelector(`input[name="route"][value="${savedRoute}"]`);
+    if (radio) radio.checked = true;
+  } else {
+    // Default to villard if no saved choice
+    const villardRadio = document.querySelector('input[name="route"][value="villard"]');
+    if (villardRadio) villardRadio.checked = true;
+  }
   
-  document.getElementById('ride-go').onclick = () => { 
+  // Update selectedRoute when user changes selection
+  document.querySelectorAll('input[name="route"]').forEach(el => {
+    el.addEventListener('change', () => {
+      selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
+    });
+  });
+  
+  document.getElementById('ride-go').onclick = () => {
+    selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
     localStorage.setItem(ROUTE_KEY, selectedRoute);
     intro.remove(); 
-    rideStarted = true; 
+    rideStarted = true;
+    loadRoute(); // Load the selected route
   };
 }
 const POWER_ZONES = [ // borne haute en %FTP, couleur de fond, couleur du texte
@@ -318,26 +324,28 @@ function teleportTo(wx, wz) {
 // Debug console : veloTeleportKm(12.5)
 window.veloTeleportKm = (km) => { if (!track) return; const sm = sampleTrack(track, km * 1000); teleportTo(sm.pos.x, sm.pos.z); };
 
-// --- Chargement GPX ---
-const route = ROUTES[selectedRoute];
-Promise.all([
-  fetch(route.gpx).then((r) => { if (!r.ok) throw new Error(`GPX HTTP ${r.status}`); return r.text(); }),
-  fetch(route.dem.meta).then((r) => r.json()),
-  fetch(route.dem.bin).then((r) => r.arrayBuffer()),
-])
-  .then(([txt, demMeta, demBuf]) => {
-    const dem = { meta: demMeta, data: new Int16Array(demBuf) };
-    track = buildTrack(parseGpx(txt), 1200);
-    console.log(`GPX ${selectedRoute}: ${track.rawCount} raw pts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
-    const terrain = route.setupTerrain(scene, track, dem);
-    buildRoad(scene, track, 4, terrain);
-    groundAt = terrain.heightAt;
-    route.setupAtmosphere(scene, renderer, sun, sunDir);
-    updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
-    route.setupDecor(scene, track, terrain);
-    const s = sampleTrack(track, 0);
-    camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
-  })
-  .catch((e) => { console.error('GPX', e); hud.source.textContent = 'GPX not found'; });
+// --- Chargement GPX (appelé après sélection de route) ---
+function loadRoute() {
+  const route = ROUTES[selectedRoute];
+  Promise.all([
+    fetch(route.gpx).then((r) => { if (!r.ok) throw new Error(`GPX HTTP ${r.status}`); return r.text(); }),
+    fetch(route.dem.meta).then((r) => r.json()),
+    fetch(route.dem.bin).then((r) => r.arrayBuffer()),
+  ])
+    .then(([txt, demMeta, demBuf]) => {
+      const dem = { meta: demMeta, data: new Int16Array(demBuf) };
+      track = buildTrack(parseGpx(txt), 1200);
+      console.log(`GPX ${selectedRoute}: ${track.rawCount} raw pts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
+      const terrain = route.setupTerrain(scene, track, dem);
+      buildRoad(scene, track, 4, terrain);
+      groundAt = terrain.heightAt;
+      route.setupAtmosphere(scene, renderer, sun, sunDir);
+      updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
+      route.setupDecor(scene, track, terrain);
+      const s = sampleTrack(track, 0);
+      camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
+    })
+    .catch((e) => { console.error('GPX', e); hud.source.textContent = 'GPX not found'; });
+}
 
 tick();
