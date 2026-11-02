@@ -600,19 +600,27 @@ function showCoachingMessage(message, isCountdown = false) {
     coachingTimeout = null;
   }
   
-  // Remove fade-out class if present
-  banner.classList.remove('fade-out');
+  // Remove fade classes
+  banner.classList.remove('fade-out', 'fade-in');
   
   // Set message and show
   banner.textContent = message;
-  banner.style.display = 'block';
+  banner.style.visibility = 'visible';
+  banner.style.opacity = '1';
+  
+  // Trigger fade-in animation
+  setTimeout(() => {
+    banner.classList.add('fade-in');
+  }, 10);
   
   // Auto-fade after delay (shorter for countdown messages)
   const duration = isCountdown ? 2000 : 4000;
   coachingTimeout = setTimeout(() => {
+    banner.classList.remove('fade-in');
     banner.classList.add('fade-out');
     setTimeout(() => {
-      banner.style.display = 'none';
+      banner.style.visibility = 'hidden';
+      banner.style.opacity = '0';
       banner.classList.remove('fade-out');
     }, 500); // Match animation duration
   }, duration);

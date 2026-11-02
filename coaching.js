@@ -305,7 +305,7 @@ export function getRampTestMessage(elapsed, powerHistory) {
 let lastMessageTime = 0;
 let lastIntervalIndex = -1;
 
-export function shouldShowMessage(currentTime, intervalIndex, intervalElapsed) {
+export function shouldShowMessage(currentTime, intervalIndex, nextIntervalIn) {
   const timeSinceLastMessage = currentTime - lastMessageTime;
   
   // Always show message at interval start
@@ -315,9 +315,12 @@ export function shouldShowMessage(currentTime, intervalIndex, intervalElapsed) {
     return { show: true, reason: 'intervalStart' };
   }
   
-  // Show countdown messages (check every frame, don't update lastMessageTime)
-  if (intervalElapsed > 0) {
-    // These are high priority, show without updating timer
+  // Show countdown messages only in the final seconds before next interval
+  // This is handled by getCountdownMessage which checks nextIntervalIn range
+  // We only mark it as countdown if we're close to an interval change
+  if (nextIntervalIn > 0 && nextIntervalIn <= 10) {
+    // Countdown is active - this will be filtered by getCountdownMessage
+    // Don't update timer so regular messages can still appear
     return { show: true, reason: 'countdown', noTimerUpdate: true };
   }
   
