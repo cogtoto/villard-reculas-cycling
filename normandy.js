@@ -1,5 +1,4 @@
-// Décor Normandie (bocage, maisons à colombages) — Three.js pur.
-// Relief : interpolation du DEM réel AWS Terrarium z13 autour du tracé GPX.
+// Décor Normandie ULTRA-RÉALISTE — Three.js avec PBR, textures procédurales, atmosphère
 import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 
@@ -15,19 +14,54 @@ let seed = 42;
 const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 
 export const NORMANDY_ZONE_COLORS = {
-  field: 'rgba(179,167,100,.75)',
-  meadow: 'rgba(145,171,92,.75)',
-  hedgerow: 'rgba(65,95,60,.85)',
-  orchard: 'rgba(130,150,85,.8)',
-  village: 'rgba(200,170,130,.85)'
+  meadow: 'rgba(110,165,90,.8)',
+  pasture: 'rgba(85,140,75,.8)',
+  hedgerow: 'rgba(55,95,50,.85)',
+  orchard: 'rgba(130,155,90,.8)',
+  colza: 'rgba(220,210,80,.75)',
+  village: 'rgba(180,160,120,.85)'
 };
+
+// Texture procédurale herbe réaliste avec variations
+function createGrassTexture(baseColor, size = 512) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
+  const g = cv.getContext('2d');
+  const img = g.createImageData(size, size);
+  const D = img.data;
+  
+  const [br, bg, bb] = baseColor;
+  for (let j = 0; j < size; j++) {
+    for (let i = 0; i < size; i++) {
+      const n1 = fbm(i * 0.05, j * 0.05, 4) * 0.6;
+      const n2 = fbm(i * 0.2, j * 0.2, 3) * 0.3;
+      const n3 = fbm(i * 0.8, j * 0.8, 2) * 0.1;
+      const n = n1 + n2 + n3;
+      
+      // Grass blade variation
+      const grassNoise = hash(Math.floor(i / 8), Math.floor(j / 8));
+      const brightness = 0.85 + n * 0.25 + grassNoise * 0.15;
+      const k = (j * size + i) * 4;
+      D[k] = Math.min(255, br * brightness);
+      D[k + 1] = Math.min(255, bg * brightness);
+      D[k + 2] = Math.min(255, bb * brightness);
+      D[k + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(50, 50);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
 
 export function buildNormandyTerrain(scene, track, dem) {
   const pts = track.pts;
   const box = new THREE.Box3(); pts.forEach((p) => box.expandByPoint(new THREE.Vector3(p.x, 0, p.z)));
   const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
 
-  // Index du tracé : point le plus proche (distance + altitude)
   const dense = [];
   for (let i = 0; i < pts.length - 1; i++) {
     const A = pts[i], B = pts[i + 1], L = Math.hypot(B.x - A.x, B.z - A.z), n = Math.max(1, Math.ceil(L / 15));
@@ -46,7 +80,6 @@ export function buildNormandyTerrain(scene, track, dem) {
   };
   const distTo = (x, z) => nearest(x, z, 1).d;
 
-  // --- MNT réel (public/dem-normandy.*, AWS Terrain Tiles z13) → mètres locaux ---
   const o = track.origin, R = 6371000, kLat = Math.cos((o.lat0 * Math.PI) / 180);
   const toLL = (x, z) => [o.lat0 - (z / R) * 180 / Math.PI, o.lon0 + (x / (R * kLat)) * 180 / Math.PI];
   const M = dem.meta, HD = dem.data;
@@ -84,153 +117,412 @@ export function buildNormandyTerrain(scene, track, dem) {
   };
   const slopeAt = (x, z) => { const e = 20; return Math.hypot(heightAt(x + e, z) - heightAt(x - e, z), heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e); };
 
-  // Parcelles bocagères (haies sur les limites)
   const parcelSize = 180;
   const hedgeAt = (x, z) => {
-    const px = Math.abs((x % parcelSize) - parcelSize / 2), pz = Math.abs((z % parcelSize) - parcelSize / 2);
-    return Math.max(px, pz) > parcelSize / 2 - 6;
+    const px = ((x % parcelSize) + parcelSize) % parcelSize;
+    const pz = ((z % parcelSize) + parcelSize) % parcelSize;
+    return (px < 6 || px > parcelSize - 6 || pz < 6 || pz > parcelSize - 6);
   };
   const orchardMask = (x, z) => {
     const cellX = Math.floor(x / parcelSize), cellZ = Math.floor(z / parcelSize);
-    return hash(cellX, cellZ) < 0.15;
+    return hash(cellX, cellZ) < 0.12;
   };
 
   const start = pts[0];
   const classify = (x, z) => {
     if (Math.hypot(x - start.x, z - start.z) < 180 + vnoise(x * 0.01, z * 0.01) * 60) return 'village';
-    if (distTo(x, z) < 8) return 'meadow';
+    if (distTo(x, z) < 8) return 'roadside';
     if (hedgeAt(x, z) && distTo(x, z) > 12) return 'hedgerow';
     if (orchardMask(x, z)) return 'orchard';
     const pn = hash(Math.floor(x / parcelSize), Math.floor(z / parcelSize));
-    return pn < 0.4 ? 'field' : 'meadow';
+    if (pn < 0.05) return 'colza';
+    if (pn < 0.35) return 'pasture';
+    return 'meadow';
   };
 
-  // Carte de couleurs
-  const FX = 768, FZ = Math.round((FX * H) / W), PX = W / FX;
+  // Carte de couleurs haute qualité avec textures d'herbe
+  const FX = 1024, FZ = Math.round((FX * H) / W), PX = W / FX;
   const x0 = c.x - W / 2, z0 = c.z - H / 2;
   const cv = document.createElement('canvas'); cv.width = FX; cv.height = FZ;
   const g2 = cv.getContext('2d'), img = g2.createImageData(FX, FZ), D = img.data;
+  
   const C = (h) => [(h >> 16) & 255, (h >> 8) & 255, h & 255];
   const COL = {
-    field: C(0xc8b870), // champs de blé/colza
-    field2: C(0xb8a65a),
-    meadow: C(0x7ba555), // prairies vertes
-    meadow2: C(0x8fb862),
-    hedgerow: C(0x3d5a38), // haies et arbres
-    hedgerow2: C(0x4a6842),
-    orchard: C(0x86965a), // vergers pommiers
-    village: C(0xc4b892) // zone habitée
+    meadow: [30, 185, 25],      // ULTRA saturated green
+    pasture: [25, 165, 20],     // ULTRA saturated dark green
+    hedgerow: [20, 100, 18],    // Deep green hedge
+    orchard: [35, 175, 30],     // ULTRA green orchard
+    colza: [220, 210, 80],      // Yellow colza (rare)
+    village: [180, 160, 120],   // Beige village
+    roadside: [30, 190, 25]     // ULTRA bright green verge
   };
+  
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-  for (let j = 0; j < FZ; j++) for (let i = 0; i < FX; i++) {
-    const x = x0 + (i + 0.5) * PX, z = z0 + (j + 0.5) * PX, k = classify(x, z), r = hash(i, j), n = fbm(x * 0.004, z * 0.004, 3);
-    let col;
-    if (k === 'hedgerow') col = mix(COL.hedgerow, COL.hedgerow2, r * 0.6);
-    else if (k === 'orchard') col = mix(COL.orchard, COL.meadow, r * 0.4);
-    else if (k === 'field') col = mix(COL.field, COL.field2, r * 0.5 + n * 0.3);
-    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5);
-    else col = mix(COL.meadow, COL.meadow2, r * 0.6 + n * 0.2);
-    const v = 0.9 + r * 0.14, o = (j * FX + i) * 4;
-    D[o] = Math.min(255, col[0] * v); D[o + 1] = Math.min(255, col[1] * v); D[o + 2] = Math.min(255, col[2] * v); D[o + 3] = 255;
+  
+  for (let j = 0; j < FZ; j++) {
+    for (let i = 0; i < FX; i++) {
+      const x = x0 + (i + 0.5) * PX, z = z0 + (j + 0.5) * PX;
+      const k = classify(x, z);
+      const r = hash(i, j);
+      
+      // Multi-octave noise for grass texture
+      const n1 = fbm(x * 0.002, z * 0.002, 4);
+      const n2 = fbm(x * 0.01, z * 0.01, 3);
+      const grassDetail = n1 * 0.7 + n2 * 0.3;
+      
+      let col = COL[k] || COL.meadow;
+      
+      // Add variation based on zone type
+      if (k === 'meadow' || k === 'pasture' || k === 'roadside') {
+        const var1 = mix(COL.meadow, COL.pasture, r * 0.3 + grassDetail * 0.2);
+        const var2 = [col[0], col[1], col[2]];
+        col = mix(var2, var1, grassDetail * 0.4);
+      } else if (k === 'hedgerow') {
+        col = mix(COL.hedgerow, [75, 115, 70], r * 0.5);
+      } else if (k === 'colza') {
+        col = mix(COL.colza, [200, 195, 70], r * 0.4 + grassDetail * 0.3);
+      } else if (k === 'orchard') {
+        col = mix(COL.orchard, COL.meadow, r * 0.3);
+      }
+      
+      // Lighting variation (subtle AO-like effect)
+      const v = 0.90 + r * 0.15 + grassDetail * 0.08;
+      const o = (j * FX + i) * 4;
+      D[o] = Math.min(255, col[0] * v);
+      D[o + 1] = Math.min(255, col[1] * v);
+      D[o + 2] = Math.min(255, col[2] * v);
+      D[o + 3] = 255;
+    }
   }
+  
   g2.putImageData(img, 0, 0);
-  const map = new THREE.CanvasTexture(cv); map.colorSpace = THREE.SRGBColorSpace; map.anisotropy = 8;
-  const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map, roughness: 1 }));
-  land.position.set(c.x, 0, c.z); land.receiveShadow = true;
+  
+  // Use solid green for lush Normandy grass (texture-based approach had rendering issues)
+  const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    color: 0x55aa45, // Lush green grass color
+    roughness: 0.95,
+    metalness: 0
+  }));
+  land.position.set(c.x, 0, c.z);
+  land.receiveShadow = true;
   scene.add(land);
 
   const isLand = (x, z) => slopeAt(x, z) < 0.35 && classify(x, z) !== 'hedgerow';
   return { land, isLand, classify, distTo, heightAt, slopeAt, orchardMask, hedgeAt, houses: [], center: c, span: Math.max(size.x, size.z) };
 }
 
-// Ciel normand d'été avec légère brume
+// Atmosphère réaliste avec meilleur gradient de ciel et brume atmosphérique
 export function normandyAtmosphere(scene, renderer, sun, sunDir) {
-  const fogCol = new THREE.Color(0xe0e8ed), skyTop = new THREE.Color(0xc8d8e8);
-  scene.fog = new THREE.Fog(fogCol, 400, 2500);
+  // Couleurs plus riches pour un ciel d'été réaliste
+  const fogCol = new THREE.Color(0xdae6ed);
+  const skyMid = new THREE.Color(0xb8d4e8);
+  const skyTop = new THREE.Color(0x87b5d8);
+  
+  scene.fog = new THREE.FogExp2(0xdae6ed, 0.0003); // Light fog for atmosphere
   scene.background = fogCol;
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
-  // Soleil d'été plus haut (élévation 45°, azimut 180° sud)
-  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 45), THREE.MathUtils.degToRad(180));
-  sun.color.set(0xfff8e8); sun.intensity = 2.8;
-  renderer.toneMappingExposure = 0.75;
+  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 48), THREE.MathUtils.degToRad(175));
+  sun.color.set(0xfffaf0);
+  sun.intensity = 3.2;
+  renderer.toneMappingExposure = 0.85;  // Higher exposure to preserve color saturation
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
   
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 32, 16), new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uHor: { value: fogCol }, uTop: { value: skyTop }, uSun: { value: sunDir } },
-    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
-    fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
-      void main(){ float h = max(vD.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.65));
-        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 18.0); c += vec3(1.0, 0.95, 0.8) * g * 0.25;
+  // Gradient de ciel plus réaliste avec transition douce
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 48, 24), new THREE.ShaderMaterial({
+    side: THREE.BackSide,
+    depthWrite: false,
+    fog: false,
+    uniforms: {
+      uHorizon: { value: fogCol },
+      uMid: { value: skyMid },
+      uTop: { value: skyTop },
+      uSun: { value: sunDir }
+    },
+    vertexShader: `
+      varying vec3 vDir;
+      void main() {
+        vDir = normalize(position);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = p.xyww;
+      }
+    `,
+    fragmentShader: `
+      uniform vec3 uHorizon, uMid, uTop, uSun;
+      varying vec3 vDir;
+      
+      void main() {
+        float h = max(vDir.y, 0.0);
+        
+        // Gradient trois couches pour réalisme
+        vec3 c;
+        if (h < 0.3) {
+          c = mix(uHorizon, uMid, h / 0.3);
+        } else {
+          c = mix(uMid, uTop, (h - 0.3) / 0.7);
+        }
+        
+        // Halo solaire subtil
+        float sunDot = max(dot(normalize(vDir), normalize(uSun)), 0.0);
+        float sunGlow = pow(sunDot, 16.0) * 0.3 + pow(sunDot, 4.0) * 0.15;
+        c += vec3(1.0, 0.98, 0.9) * sunGlow;
+        
+        // Diffusion atmosphérique
+        float scatter = pow(1.0 - abs(vDir.y), 2.0) * 0.08;
+        c = mix(c, uHorizon, scatter);
+        
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
-      }`,
+      }
+    `,
   }));
-  dome.frustumCulled = false; dome.renderOrder = -1;
+  dome.frustumCulled = false;
+  dome.renderOrder = -1;
   scene.add(dome);
+  
+  // Balanced ambient light for good visibility
+  const ambient = new THREE.AmbientLight(0xffffff, 0.7);
+  scene.add(ambient);
+  
   return { dome, fog: scene.fog };
 }
 
-// Arbres bocagers : chênes, hêtres, peupliers
-function deciduousTree() {
-  const trunk = new THREE.CylinderGeometry(0.3, 0.4, 5, 6);
-  trunk.translate(0, 2.5, 0);
-  const crown = new THREE.IcosahedronGeometry(3.5, 1);
-  crown.translate(0, 5.5, 0);
+// Arbres réalistes avec plusieurs sphères pour forme naturelle
+function createRealisticOak() {
+  const trunk = new THREE.CylinderGeometry(0.22, 0.32, 4.8, 8);
+  trunk.translate(0, 2.4, 0);
+  
+  // Crown: 5 overlapping spheres for very natural oak shape
+  const spheres = [
+    { r: 2.6, x: 0, y: 5.8, z: 0 },
+    { r: 2.0, x: -0.9, y: 5.2, z: 0.7 },
+    { r: 1.8, x: 0.8, y: 5.4, z: -0.6 },
+    { r: 1.6, x: -0.4, y: 6.2, z: -0.5 },
+    { r: 1.5, x: 0.6, y: 5.0, z: 0.8 }
+  ];
+  
+  const geos = [trunk];
+  spheres.forEach(s => {
+    const sphere = new THREE.IcosahedronGeometry(s.r, 2);
+    sphere.translate(s.x, s.y, s.z);
+    geos.push(sphere);
+  });
+  
+  const positions = geos.map(g => g.attributes.position.array);
+  const totalLength = positions.reduce((sum, arr) => sum + arr.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  positions.forEach(arr => {
+    merged.set(arr, offset);
+    offset += arr.length;
+  });
+  
   const geo = new THREE.BufferGeometry();
-  const p1 = trunk.attributes.position.array, p2 = crown.attributes.position.array;
-  const pos = new Float32Array(p1.length + p2.length);
-  pos.set(p1, 0); pos.set(p2, p1.length);
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
   geo.computeVertexNormals();
   return geo;
 }
 
-// Haies bocagères et arbres le long des parcelles
-export function addNormandyVegetation(scene, track, terrain, max = 8000) {
-  const trees = [], hedges = [];
-  const { pts } = track;
+function createRealisticBeech() {
+  const trunk = new THREE.CylinderGeometry(0.20, 0.28, 5.2, 8);
+  trunk.translate(0, 2.6, 0);
   
-  for (let tries = 0; tries < 150000 && trees.length + hedges.length < max; tries++) {
+  // Beech: more upright, slightly elongated crown
+  const spheres = [
+    { r: 2.4, x: 0, y: 6.0, z: 0 },
+    { r: 1.9, x: -0.7, y: 5.5, z: 0.5 },
+    { r: 1.7, x: 0.6, y: 5.8, z: -0.4 },
+    { r: 1.5, x: 0, y: 6.6, z: 0 }
+  ];
+  
+  const geos = [trunk];
+  spheres.forEach(s => {
+    const sphere = new THREE.IcosahedronGeometry(s.r, 2);
+    sphere.translate(s.x, s.y, s.z);
+    geos.push(sphere);
+  });
+  
+  const positions = geos.map(g => g.attributes.position.array);
+  const totalLength = positions.reduce((sum, arr) => sum + arr.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  positions.forEach(arr => {
+    merged.set(arr, offset);
+    offset += arr.length;
+  });
+  
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+function createAppleTree() {
+  const trunk = new THREE.CylinderGeometry(0.18, 0.26, 3.2, 6);
+  trunk.translate(0, 1.6, 0);
+  
+  // Apple tree: lower, rounder crown
+  const spheres = [
+    { r: 2.3, x: 0, y: 3.9, z: 0 },
+    { r: 1.7, x: -0.7, y: 3.5, z: 0.6 },
+    { r: 1.5, x: 0.6, y: 3.6, z: -0.5 }
+  ];
+  
+  const geos = [trunk];
+  spheres.forEach(s => {
+    const sphere = new THREE.IcosahedronGeometry(s.r, 2);
+    sphere.translate(s.x, s.y, s.z);
+    geos.push(sphere);
+  });
+  
+  const positions = geos.map(g => g.attributes.position.array);
+  const totalLength = positions.reduce((sum, arr) => sum + arr.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  positions.forEach(arr => {
+    merged.set(arr, offset);
+    offset += arr.length;
+  });
+  
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Haie bocagère dense et réaliste
+function createHedge() {
+  // Multiple small spheres clustered for dense hedge appearance
+  const spheres = [];
+  for (let i = 0; i < 4; i++) {
+    const s = new THREE.IcosahedronGeometry(0.8 + rand() * 0.4, 1);
+    s.translate((rand() - 0.5) * 0.6, 0.8 + rand() * 0.5, (rand() - 0.5) * 0.6);
+    spheres.push(s);
+  }
+  
+  const positions = spheres.map(g => g.attributes.position.array);
+  const totalLength = positions.reduce((sum, arr) => sum + arr.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  positions.forEach(arr => {
+    merged.set(arr, offset);
+    offset += arr.length;
+  });
+  
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+export function addNormandyVegetation(scene, track, terrain, max = 9000) {
+  const oaks = [], beeches = [], apples = [], roadHedges = [], fieldHedges = [];
+  const { pts, cum, length } = track;
+  
+  const along = (d) => {
+    let lo = 0, hi = cum.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
+    const A = pts[lo], B = pts[hi], s = cum[hi] - cum[lo] || 1, t = (d - cum[lo]) / s;
+    return { x: A.x + (B.x - A.x) * t, z: A.z + (B.z - A.z) * t, tx: (B.x - A.x) / s, tz: (B.z - A.z) / s };
+  };
+  
+  // ROADSIDE HEDGES - très visibles
+  for (let d = 0; d < length; d += 4 + rand() * 3) {
+    const p = along(d);
+    for (const side of [-1, 1]) {
+      const off = side * (5.5 + rand() * 1.5);
+      const x = p.x - p.tz * off, z = p.z + p.tx * off;
+      if (terrain.distTo(x, z) < 3) continue;
+      if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 60)) continue;
+      const y = terrain.heightAt(x, z);
+      roadHedges.push({ x, y: y - 0.15, z, s: 0.7 + rand() * 0.3, r: rand() * 6.28 });
+    }
+  }
+  
+  // FIELD TREES and HEDGEROWS
+  for (let tries = 0; tries < 130000 && oaks.length + beeches.length + apples.length + fieldHedges.length < max - roadHedges.length; tries++) {
     const p = pts[Math.floor(rand() * pts.length)];
-    const a = rand() * Math.PI * 2, r = 9 + Math.pow(rand(), 1.6) * 1200;
+    const a = rand() * Math.PI * 2, r = 9 + Math.pow(rand(), 1.6) * 1000;
     const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
     const zc = terrain.classify(x, z);
     
     if (zc === 'hedgerow') {
       if (terrain.distTo(x, z) < 8) continue;
-      if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 90)) continue;
+      if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 65)) continue;
       const y = terrain.heightAt(x, z);
-      const item = { x, y: y - 0.3, z, s: 0.5 + rand() * 0.4, r: rand() * 6.28 };
-      if (rand() < 0.3) trees.push(item); else hedges.push(item);
-    } else if ((zc === 'village' || zc === 'meadow' || zc === 'orchard') && rand() < 0.08) {
+      const item = { x, y: y - 0.18, z, s: 0.7 + rand() * 0.4, r: rand() * 6.28 };
+      const treeChance = rand();
+      if (treeChance < 0.15) oaks.push(item);
+      else if (treeChance < 0.25) beeches.push(item);
+      else fieldHedges.push(item);
+    } else if (zc === 'orchard') {
       if (terrain.distTo(x, z) < 8) continue;
-      if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 90)) continue;
+      if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 65)) continue;
       const y = terrain.heightAt(x, z);
-      trees.push({ x, y: y - 0.3, z, s: 0.7 + rand() * 0.6, r: rand() * 6.28 });
+      apples.push({ x, y: y - 0.18, z, s: 0.75 + rand() * 0.4, r: rand() * 6.28 });
+    } else if ((zc === 'meadow' || zc === 'pasture') && rand() < 0.055) {
+      if (terrain.distTo(x, z) < 8) continue;
+      if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 75)) continue;
+      const y = terrain.heightAt(x, z);
+      const item = { x, y: y - 0.18, z, s: 0.85 + rand() * 0.6, r: rand() * 6.28 };
+      if (rand() < 0.6) oaks.push(item);
+      else beeches.push(item);
     }
   }
 
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  const instCol = (geo, mat, list) => {
+    if (!list.length) return;
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    const col = new THREE.Color();
+    list.forEach((it, i) => {
+      q.setFromAxisAngle(up, it.r);
+      sc.setScalar(it.s);
+      v.set(it.x, it.y, it.z);
+      im.setMatrixAt(i, m.compose(v, q, sc));
+      
+      // Variation de couleur pour réalisme
+      const hue = 0.27 + (rand() - 0.5) * 0.06;
+      const sat = 0.30 + rand() * 0.15;
+      const light = 0.30 + rand() * 0.12;
+      col.setHSL(hue, sat, light);
+      im.setColorAt(i, col);
+    });
+    im.castShadow = true;
+    im.receiveShadow = true;
+    scene.add(im);
+  };
+
   const inst = (geo, mat, list) => {
     if (!list.length) return;
     const im = new THREE.InstancedMesh(geo, mat, list.length);
-    list.forEach((it, i) => { q.setFromAxisAngle(up, it.r); sc.setScalar(it.s); v.set(it.x, it.y, it.z); im.setMatrixAt(i, m.compose(v, q, sc)); });
-    im.castShadow = true; scene.add(im);
+    list.forEach((it, i) => {
+      q.setFromAxisAngle(up, it.r);
+      sc.setScalar(it.s);
+      v.set(it.x, it.y, it.z);
+      im.setMatrixAt(i, m.compose(v, q, sc));
+    });
+    im.castShadow = true;
+    im.receiveShadow = true;
+    scene.add(im);
   };
 
-  const treeMat = new THREE.MeshStandardMaterial({ color: 0x5a7a3e, roughness: 0.9 });
-  const hedgeMat = new THREE.MeshStandardMaterial({ color: 0x4a6842, roughness: 1, flatShading: true });
+  // Materials PBR
+  const oakMat = new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0, envMapIntensity: 0.3 });
+  const beechMat = new THREE.MeshStandardMaterial({ roughness: 0.80, metalness: 0, envMapIntensity: 0.3 });
+  const appleMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0, envMapIntensity: 0.25 });
+  const hedgeMat = new THREE.MeshStandardMaterial({ color: 0x486f38, roughness: 0.95, metalness: 0 });
   
-  inst(deciduousTree(), treeMat, trees);
-  const bushGeo = new THREE.IcosahedronGeometry(1.2, 0); bushGeo.scale(1.5, 1.8, 1.2);
-  inst(bushGeo, hedgeMat, hedges);
+  instCol(createRealisticOak(), oakMat, oaks);
+  instCol(createRealisticBeech(), beechMat, beeches);
+  instCol(createAppleTree(), appleMat, apples);
+  inst(createHedge(), hedgeMat, fieldHedges);
+  inst(createHedge(), hedgeMat, roadHedges);
 
-  return trees.length + hedges.length;
+  return oaks.length + beeches.length + apples.length + fieldHedges.length + roadHedges.length;
 }
 
-// Vaches normandes dans les prairies
 export function addNormandyCows(scene, track, terrain, max = 120) {
   const cows = [];
   const { pts } = track;
@@ -241,50 +533,69 @@ export function addNormandyCows(scene, track, terrain, max = 120) {
     const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
     const zc = terrain.classify(x, z);
     
-    if (zc !== 'meadow' || terrain.distTo(x, z) < 12) continue;
-    if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 80)) continue;
-    if (cows.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 < 25)) continue;
+    if ((zc !== 'meadow' && zc !== 'pasture') || terrain.distTo(x, z) < 12) continue;
+    if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 75)) continue;
+    if (cows.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 < 22)) continue;
     
     const y = terrain.heightAt(x, z);
-    cows.push({ x, y: y - 0.3, z, r: rand() * 6.28, v: rand() });
+    cows.push({ x, y: y - 0.25, z, r: rand() * 6.28, v: rand() });
   }
 
-  // Géométrie simplifiée de vache
-  const body = new THREE.BoxGeometry(2, 1.4, 1); body.translate(0, 1, 0);
-  const head = new THREE.BoxGeometry(0.8, 0.7, 0.7); head.translate(1.2, 1.2, 0);
+  // Vache normande réaliste (proportions correctes)
+  const body = new THREE.BoxGeometry(2.2, 1.5, 1.1);
+  body.translate(0, 1.05, 0);
+  const head = new THREE.BoxGeometry(0.75, 0.65, 0.65);
+  head.translate(1.25, 1.15, 0);
+  const legs = [];
+  for (const [lx, lz] of [[-0.6, -0.35], [-0.6, 0.35], [0.6, -0.35], [0.6, 0.35]]) {
+    const leg = new THREE.CylinderGeometry(0.12, 0.12, 0.9, 6);
+    leg.translate(lx, 0.45, lz);
+    legs.push(leg);
+  }
+  
+  const geos = [body, head, ...legs];
+  const positions = geos.map(g => g.attributes.position.array);
+  const totalLength = positions.reduce((sum, arr) => sum + arr.length, 0);
+  const merged = new Float32Array(totalLength);
+  let offset = 0;
+  positions.forEach(arr => {
+    merged.set(arr, offset);
+    offset += arr.length;
+  });
+  
   const geo = new THREE.BufferGeometry();
-  const p1 = body.attributes.position.array, p2 = head.attributes.position.array;
-  const pos = new Float32Array(p1.length + p2.length);
-  pos.set(p1, 0); pos.set(p2, p1.length);
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
   geo.computeVertexNormals();
 
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
+  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
   const im = new THREE.InstancedMesh(geo, mat, cows.length);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
+  const mx = new THREE.Matrix4(), quat = new THREE.Quaternion(), upVec = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
   
   cows.forEach((c, i) => {
-    q.setFromAxisAngle(up, c.r);
-    im.setMatrixAt(i, m.compose(new THREE.Vector3(c.x, c.y, c.z), q, new THREE.Vector3(0.4, 0.4, 0.4)));
-    // Vaches normandes : blanc avec taches brunes/noires
-    const base = c.v < 0.4 ? 0xf2efe6 : c.v < 0.7 ? 0x6b4a3a : 0x2a2420;
+    quat.setFromAxisAngle(upVec, c.r);
+    im.setMatrixAt(i, mx.compose(new THREE.Vector3(c.x, c.y, c.z), quat, new THREE.Vector3(0.42, 0.42, 0.42)));
+    const base = c.v < 0.35 ? 0xf5f2ea : c.v < 0.65 ? 0x7a5a48 : c.v < 0.85 ? 0x352f28 : 0xffffff;
     im.setColorAt(i, col.setHex(base));
   });
-  im.castShadow = true; im.receiveShadow = true;
+  im.castShadow = true;
+  im.receiveShadow = true;
   scene.add(im);
 
   return cows.length;
 }
 
-// Maisons à colombages normandes
+// Maisons à colombages ULTRA-DÉTAILLÉES
 function canvasTex(size, draw) {
-  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
   draw(cv.getContext('2d'), size);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
   return t;
 }
 
-export function addNormandyHouses(scene, track, terrain, { village = 25, hamlets = 45 } = {}) {
+export function addNormandyHouses(scene, track, terrain, { village = 20, hamlets = 35 } = {}) {
   const { pts, cum, length } = track, list = [];
   const along = (d) => {
     let lo = 0, hi = cum.length - 1;
@@ -294,78 +605,155 @@ export function addNormandyHouses(scene, track, terrain, { village = 25, hamlets
   };
 
   const ok = (x, z) => terrain.distTo(x, z) > 10 && terrain.slopeAt(x, z) < 0.4 && terrain.classify(x, z) !== 'hedgerow'
-    && !list.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 200);
+    && !list.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 160);
 
   const push = (x, z) => {
     let y = terrain.heightAt(x, z);
-    const w = 7 + rand() * 4, d = 6 + rand() * 3, h = 3.5 + rand() * 1.5;
-    list.push({ x, z, y: y - 0.15, rot: rand() * 6.28, w, d, h, v: rand() });
+    const w = 7.5 + rand() * 2.5;
+    const d = 5 + rand() * 1.3;
+    const h = 3.3 + rand() * 0.7;
+    list.push({ x, z, y: y - 0.15, rot: rand() * 6.28, w, d, h, v: Math.floor(rand() * 2) });
   };
 
-  // Village de départ
   const s0 = pts[0];
-  for (let t = 0; t < 2000 && list.length < village; t++) {
-    const a = rand() * 6.28, r = 18 + rand() * 200;
+  for (let t = 0; t < 1500 && list.length < village; t++) {
+    const a = rand() * 6.28, r = 18 + rand() * 170;
     const x = s0.x + Math.cos(a) * r, z = s0.z + Math.sin(a) * r;
     if (ok(x, z)) push(x, z);
   }
 
-  // Hameaux le long de la route
   const nv = list.length;
-  for (let d = 800; d < length - 400 && list.length - nv < hamlets; d += 1200 + rand() * 1800) {
-    const n = 2 + Math.floor(rand() * 5);
+  for (let d = 800; d < length - 400 && list.length - nv < hamlets; d += 1500 + rand() * 2200) {
+    const n = 2 + Math.floor(rand() * 4);
     for (let i = 0; i < n * 3 && list.length - nv < hamlets; i++) {
-      const p = along(d + rand() * 140), side = rand() < 0.5 ? 1 : -1, off = 14 + rand() * 35;
+      const p = along(d + rand() * 150), side = rand() < 0.5 ? 1 : -1, off = 14 + rand() * 32;
       const x = p.x - p.tz * side * off, z = p.z + p.tx * side * off;
       if (ok(x, z)) push(x, z);
     }
   }
 
-  // Murs à colombages (texture procédurale)
-  const timberTex = canvasTex(256, (g, s) => {
-    g.fillStyle = '#f2efe6'; g.fillRect(0, 0, s, s); // crépi blanc cassé
-    g.strokeStyle = '#3a2818'; g.lineWidth = 8;
-    // Poteaux verticaux
-    for (let x = 0; x < s; x += s / 5) { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, s); g.stroke(); }
-    // Croix de Saint-André
-    g.beginPath(); g.moveTo(s * 0.2, 0); g.lineTo(s * 0.4, s); g.stroke();
-    g.beginPath(); g.moveTo(s * 0.4, 0); g.lineTo(s * 0.2, s); g.stroke();
-    g.beginPath(); g.moveTo(s * 0.6, 0); g.lineTo(s * 0.8, s); g.stroke();
-    g.beginPath(); g.moveTo(s * 0.8, 0); g.lineTo(s * 0.6, s); g.stroke();
-    // Traverses horizontales
-    for (let y = s / 3; y < s; y += s / 3) {
-      g.beginPath(); g.moveTo(0, y); g.lineTo(s, y); g.stroke();
+  // Texture colombage haute définition avec fenêtres et portes
+  const timberTex = canvasTex(512, (g, s) => {
+    g.fillStyle = '#faf7f0';
+    g.fillRect(0, 0, s, s);
+    
+    // Timber framing
+    g.strokeStyle = '#3a2515';
+    g.lineWidth = 11;
+    g.lineCap = 'round';
+    
+    for (let x = 0; x < s; x += s / 5) {
+      g.beginPath();
+      g.moveTo(x, 0);
+      g.lineTo(x, s);
+      g.stroke();
     }
+    
+    g.beginPath();
+    g.moveTo(s * 0.2, 0);
+    g.lineTo(s * 0.4, s * 0.5);
+    g.lineTo(s * 0.2, s);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(s * 0.4, 0);
+    g.lineTo(s * 0.2, s * 0.5);
+    g.lineTo(s * 0.4, s);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(s * 0.6, 0);
+    g.lineTo(s * 0.8, s * 0.5);
+    g.lineTo(s * 0.6, s);
+    g.stroke();
+    g.beginPath();
+    g.moveTo(s * 0.8, 0);
+    g.lineTo(s * 0.6, s * 0.5);
+    g.lineTo(s * 0.8, s);
+    g.stroke();
+    
+    for (let y = s / 3; y < s; y += s / 3) {
+      g.beginPath();
+      g.moveTo(0, y);
+      g.lineTo(s, y);
+      g.stroke();
+    }
+    
+    // Fenêtres
+    g.fillStyle = '#2a3844';
+    g.strokeStyle = '#4a3828';
+    g.lineWidth = 4;
+    const windows = [
+      [s * 0.12, s * 0.35, s * 0.15, s * 0.22],
+      [s * 0.45, s * 0.35, s * 0.15, s * 0.22],
+      [s * 0.73, s * 0.35, s * 0.15, s * 0.22]
+    ];
+    windows.forEach(([x, y, w, h]) => {
+      g.fillRect(x, y, w, h);
+      g.strokeRect(x, y, w, h);
+      g.beginPath();
+      g.moveTo(x + w / 2, y);
+      g.lineTo(x + w / 2, y + h);
+      g.moveTo(x, y + h / 2);
+      g.lineTo(x + w, y + h / 2);
+      g.stroke();
+    });
+    
+    // Porte
+    g.fillStyle = '#4a3020';
+    g.fillRect(s * 0.42, s * 0.68, s * 0.16, s * 0.28);
+    g.strokeStyle = '#3a2515';
+    g.lineWidth = 3;
+    g.strokeRect(s * 0.42, s * 0.68, s * 0.16, s * 0.28);
   });
 
-  const roofTex = canvasTex(256, (g, s) => {
-    g.fillStyle = '#3a3840'; g.fillRect(0, 0, s, s);
-    for (let y = 0; y < s; y += 12) {
-      for (let x = (y % 24 === 0 ? 0 : -10); x < s; x += 20) {
-        const v = 40 + rand() * 30;
-        g.fillStyle = `rgb(${v},${v},${v + 5})`;
-        g.fillRect(x, y, 18, 10);
+  const roofTex = canvasTex(512, (g, s) => {
+    g.fillStyle = '#35353d';
+    g.fillRect(0, 0, s, s);
+    const rh = 16;
+    for (let r = 0; r < s / rh; r++) {
+      for (let x = -((r % 2) * 10); x < s; x += 22) {
+        const v = 42 + rand() * 38;
+        g.fillStyle = `rgb(${v},${v},${v + 6})`;
+        g.fillRect(x + 1, r * rh, 20, rh - 2);
+        g.fillStyle = `rgba(0,0,0,0.25)`;
+        g.fillRect(x + 1, r * rh + rh - 4, 20, 3);
       }
     }
   });
 
-  const body = new THREE.BoxGeometry(1, 1, 1); body.translate(0, 0.5, 0);
+  const body = new THREE.BoxGeometry(1, 1, 1);
+  body.translate(0, 0.5, 0);
   const roof = makeRoofGeometry();
   
-  const wallMat = new THREE.MeshStandardMaterial({ map: timberTex, roughness: 0.85 });
-  const roofMat = new THREE.MeshStandardMaterial({ map: roofTex, roughness: 0.9 });
+  const wallMat = new THREE.MeshStandardMaterial({
+    map: timberTex,
+    roughness: 0.88,
+    metalness: 0,
+    envMapIntensity: 0.2
+  });
+  const roofMat = new THREE.MeshStandardMaterial({
+    map: roofTex,
+    roughness: 0.92,
+    metalness: 0,
+    envMapIntensity: 0.15
+  });
   
   const bodyIM = new THREE.InstancedMesh(body, wallMat, list.length);
   const roofIM = new THREE.InstancedMesh(roof, roofMat, list.length);
   
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  const mx = new THREE.Matrix4(), quat = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
   list.forEach((h, i) => {
-    q.setFromAxisAngle(up, h.rot);
-    bodyIM.setMatrixAt(i, m.compose(new THREE.Vector3(h.x, h.y, h.z), q, new THREE.Vector3(h.w, h.h, h.d)));
-    roofIM.setMatrixAt(i, m.compose(new THREE.Vector3(h.x, h.y + h.h, h.z), q, new THREE.Vector3(h.w * 1.12, h.d * 0.55, h.d * 1.15)));
+    quat.setFromAxisAngle(up, h.rot);
+    bodyIM.setMatrixAt(i, mx.compose(new THREE.Vector3(h.x, h.y, h.z), quat, new THREE.Vector3(h.w, h.h, h.d)));
+    // Roof overhang + steep pitch
+    roofIM.setMatrixAt(i, mx.compose(new THREE.Vector3(h.x, h.y + h.h + 0.05, h.z), quat, new THREE.Vector3(h.w * 1.15, h.d * 0.64, h.d * 1.22)));
   });
 
-  for (const im of [bodyIM, roofIM]) { im.castShadow = true; im.receiveShadow = true; scene.add(im); }
+  for (const im of [bodyIM, roofIM]) {
+    im.castShadow = true;
+    im.receiveShadow = true;
+    scene.add(im);
+  }
+  
   terrain.houses = list;
   return { village: nv, hamlets: list.length - nv };
 }
