@@ -8,8 +8,47 @@ import { createRider } from './rider.js';
 import { createSensors } from './sensors.js';
 import { addRoadside } from './roadside.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
+import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
 
 installHeightFog(); // avant toute compilation de shader
+
+// --- Route configuration ---
+const ROUTES = {
+  villard: {
+    name: 'Villard-Reculas (Oisans)',
+    description: 'descent + climb',
+    gpx: '/villard-reculas.gpx',
+    dem: { meta: '/dem-villard.json', bin: '/dem-villard.bin' },
+    setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
+    setupAtmosphere: (scene, renderer, sun, sunDir) => alpineAtmosphere(scene, renderer, sun, sunDir),
+    setupDecor: (scene, track, terrain) => {
+      addClouds(scene, terrain.center, terrain.span * 3, 3200);
+      const ch = addChalets(scene, track, terrain);
+      console.log('Chalets:', ch.village, 'village ·', ch.hamlets, 'hamlets');
+      console.log('Roadside:', addRoadside(scene, track, terrain));
+      console.log('Trees:', addForest(scene, track, terrain), 'instances');
+    },
+    zoneColors: ZONE_COLORS
+  },
+  normandy: {
+    name: 'Normandy countryside – Grand-Camp (Eure)',
+    description: '~21 km rolling',
+    gpx: '/normandie-grand-camp.gpx',
+    dem: { meta: '/dem-normandy.json', bin: '/dem-normandy.bin' },
+    setupTerrain: (scene, track, dem) => buildNormandyTerrain(scene, track, dem),
+    setupAtmosphere: (scene, renderer, sun, sunDir) => normandyAtmosphere(scene, renderer, sun, sunDir),
+    setupDecor: (scene, track, terrain) => {
+      const h = addNormandyHouses(scene, track, terrain);
+      console.log('Half-timbered houses:', h.village, 'village ·', h.hamlets, 'hamlets');
+      console.log('Vegetation:', addNormandyVegetation(scene, track, terrain), 'instances');
+      console.log('Cows:', addNormandyCows(scene, track, terrain));
+    },
+    zoneColors: NORMANDY_ZONE_COLORS
+  }
+};
+
+const ROUTE_KEY = 'vv.route';
+let selectedRoute = localStorage.getItem(ROUTE_KEY) || 'villard';
 
 // --- FTP & zones de puissance Coggan (modifier ici) ---
 const FTP_KEY = 'vv.ftp';
@@ -18,14 +57,36 @@ let rideStarted = false;
 {
   const inp = document.getElementById('ftp-input'), intro = document.getElementById('intro');
   inp.value = FTP_W;
-  const showRoute = () => { document.getElementById('ftp-step').style.display = 'none'; document.getElementById('route-step').style.display = ''; };
-  if (localStorage.getItem(FTP_KEY)) showRoute(); // FTP asked on first launch only
+  const showRoute = () => { 
+    document.getElementById('ftp-step').style.display = 'none'; 
+    document.getElementById('route-step').style.display = ''; 
+    updateRouteInfo();
+  };
+  if (localStorage.getItem(FTP_KEY)) showRoute();
   document.getElementById('ftp-ok').onclick = () => {
     const v = Math.round(Number(inp.value));
     if (!(v >= 50 && v <= 600)) { inp.style.outline = '2px solid #e74c3c'; return; }
     FTP_W = v; localStorage.setItem(FTP_KEY, String(v)); document.getElementById('ftp').textContent = v; showRoute();
   };
-  document.getElementById('ride-go').onclick = () => { intro.remove(); rideStarted = true; };
+  
+  // Route selection
+  const updateRouteInfo = () => {
+    selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
+    const route = ROUTES[selectedRoute];
+    document.getElementById('route-name').textContent = route.name;
+    document.getElementById('route-desc').textContent = route.description;
+  };
+  document.querySelectorAll('input[name="route"]').forEach(el => {
+    el.addEventListener('change', updateRouteInfo);
+    if (el.value === selectedRoute) el.checked = true;
+  });
+  updateRouteInfo();
+  
+  document.getElementById('ride-go').onclick = () => { 
+    localStorage.setItem(ROUTE_KEY, selectedRoute);
+    intro.remove(); 
+    rideStarted = true; 
+  };
 }
 const POWER_ZONES = [ // borne haute en %FTP, couleur de fond, couleur du texte
   { z: 'Z1', max: 55, bg: '#9e9e9e', fg: '#111' },      // récupération active
@@ -139,6 +200,7 @@ function recordStats(dt, here) {
 const fmtT = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + 'h ' : '') + String(m).padStart(h ? 2 : 1, '0') + 'm ' + String(x).padStart(2, '0') + 's'; };
 const ZONE_NAMES = ['Easy recovery', 'Endurance', 'Tempo', 'Threshold', 'VO2 max', 'Anaerobic', 'Sprint'];
 function showStats() {
+  document.getElementById('stats-route').textContent = ROUTES[selectedRoute].name + ' · ride paused';
   const kmh = (ms) => (ms * 3.6).toFixed(1);
   const avgV = S.moving ? S.dist / S.moving : 0, avgW = S.elapsed ? S.wSum / S.elapsed : 0;
   const np = S.npN ? Math.pow(S.np4 / S.npN, 0.25) : null;
@@ -257,23 +319,22 @@ function teleportTo(wx, wz) {
 window.veloTeleportKm = (km) => { if (!track) return; const sm = sampleTrack(track, km * 1000); teleportTo(sm.pos.x, sm.pos.z); };
 
 // --- Chargement GPX ---
+const route = ROUTES[selectedRoute];
 Promise.all([
-  fetch('/villard-reculas.gpx').then((r) => { if (!r.ok) throw new Error(`GPX HTTP ${r.status}`); return r.text(); }),
-  fetch('/dem-villard.json').then((r) => r.json()),
-  fetch('/dem-villard.bin').then((r) => r.arrayBuffer()),
+  fetch(route.gpx).then((r) => { if (!r.ok) throw new Error(`GPX HTTP ${r.status}`); return r.text(); }),
+  fetch(route.dem.meta).then((r) => r.json()),
+  fetch(route.dem.bin).then((r) => r.arrayBuffer()),
 ])
   .then(([txt, demMeta, demBuf]) => {
     const dem = { meta: demMeta, data: new Int16Array(demBuf) };
     track = buildTrack(parseGpx(txt), 1200);
-    console.log(`GPX : ${track.rawCount} pts bruts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
-    const terrain = buildAlpineTerrain(scene, track, dem);
+    console.log(`GPX ${selectedRoute}: ${track.rawCount} raw pts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
+    const terrain = route.setupTerrain(scene, track, dem);
     buildRoad(scene, track, 4, terrain);
     groundAt = terrain.heightAt;
-    updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, ZONE_COLORS);
-    addClouds(scene, terrain.center, terrain.span * 3, 3200);
-    { const ch = addChalets(scene, track, terrain); console.log('Chalets bois — village :', ch.village, '· hameaux :', ch.hamlets); }
-    console.log('Bords de route :', addRoadside(scene, track, terrain));
-    console.log('Arbres :', addForest(scene, track, terrain), 'instances');
+    route.setupAtmosphere(scene, renderer, sun, sunDir);
+    updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
+    route.setupDecor(scene, track, terrain);
     const s = sampleTrack(track, 0);
     camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
   })

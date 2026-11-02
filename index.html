@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Virtual Bike — Villard-Reculas</title>
+    <title>Virtual Bike — Villard / Normandy</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; font-family: system-ui, sans-serif; }
       #hud {
@@ -30,7 +30,7 @@
       <div>Source: <strong id="source">—</strong></div>
       <div><button id="ble-btn" style="margin:4px 0;padding:4px 8px;border-radius:6px;border:0;background:#2e86de;color:#fff;font-weight:600">Connect HomeTrainer</button></div>
     </div>
-    <div id="hint">Real Villard-Reculas (Oisans) route: descent + climb (Strava GPX, ~26.5 km, 718–1495 m) · mock data by default · BLE when an FTMS/Power sensor is found · +/− = virtual gears (trainer resistance)</div>
+    <div id="hint">Real GPS routes · Mock data by default · BLE when FTMS/Power sensor found · +/− = virtual gears (trainer resistance)</div>
     <script type="module" src="/main.js"></script>
       <div id="shift-pad">
       <button id="shift-up" aria-label="Gear up">+</button>
@@ -54,7 +54,7 @@
       <button id="stop-no" class="vv-b" style="background:#55606b">Keep riding</button> <button id="stop-yes" class="vv-b" style="background:#e74c3c">Stop &amp; see summary</button>
     </div></div>
     <div id="stats" class="vv-modal" style="display:none"><div class="vv-box" style="max-width:640px;width:100%;max-height:92vh;overflow:auto">
-      <h2 style="margin:0 0 4px">Ride summary</h2><div style="opacity:.7;margin-bottom:6px">Villard-Reculas (Oisans) · ride paused</div>
+      <h2 style="margin:0 0 4px">Ride summary</h2><div id="stats-route" style="opacity:.7;margin-bottom:6px"></div>
       <div id="stats-body"></div>
       <div style="margin-top:16px;text-align:right"><button id="stats-resume" class="vv-b" style="background:#27ae60">Resume ride</button> <button id="stats-end" class="vv-b" style="background:#e74c3c">End ride</button></div>
     </div></div>
@@ -74,7 +74,7 @@
       .st-zp { width: 72px; text-align: right; opacity: .85; }
     </style>
   <div id="intro" style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(10,20,30,.82);font:16px system-ui,sans-serif;color:#fff">
-  <div style="max-width:460px;margin:16px;padding:22px 24px;border-radius:14px;background:#1d2b38;box-shadow:0 8px 30px #0008">
+  <div style="max-width:520px;margin:16px;padding:22px 24px;border-radius:14px;background:#1d2b38;box-shadow:0 8px 30px #0008">
     <div id="ftp-step">
       <h2 style="margin:0 0 10px">Welcome!</h2>
       <p style="margin:0 0 12px">Enter your FTP (Functional Threshold Power) so power zones match your fitness.</p>
@@ -82,10 +82,24 @@
       <div style="margin-top:16px;text-align:right"><button id="ftp-ok" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#2e86de;color:#fff;font-weight:700">Continue</button></div>
     </div>
     <div id="route-step" style="display:none">
-      <h2 style="margin:0 0 10px">Villard-Reculas (Oisans)</h2>
-      <p style="margin:0 0 8px">This is a <strong>real route</strong> recorded on Strava: a descent from Villard-Reculas followed by the climb back up.</p>
-      <p style="margin:0 0 8px">~26.5 km · 718–1495 m elevation.</p>
-      <p style="margin:0 0 12px;opacity:.8">Use the big +/− buttons to shift virtual gears — your smart trainer resistance follows the gradient and your gear.</p>
+      <h2 style="margin:0 0 10px">Choose your route</h2>
+      <div style="margin:16px 0">
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="route" value="villard" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Villard-Reculas (Oisans)</div>
+            <div style="opacity:.8;font-size:14px">Descent + climb · ~26.5 km · 718–1495 m</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="route" value="normandy" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Normandy countryside – Grand-Camp (Eure)</div>
+            <div style="opacity:.8;font-size:14px">~21 km rolling · 120–185 m</div>
+          </div>
+        </label>
+      </div>
+      <p style="margin:12px 0 16px;opacity:.85;font-size:14px">Use the +/− buttons to shift virtual gears — your smart trainer resistance follows the gradient and your gear.</p>
       <div style="text-align:right"><button id="ride-go" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#27ae60;color:#fff;font-weight:700">Start ride</button></div>
     </div>
   </div>
