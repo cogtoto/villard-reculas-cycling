@@ -30,6 +30,17 @@
       <div>Source: <strong id="source">—</strong></div>
       <div><button id="ble-btn" style="margin:4px 0;padding:4px 8px;border-radius:6px;border:0;background:#2e86de;color:#fff;font-weight:600">Connect HomeTrainer</button></div>
     </div>
+    <div id="workout-hud" style="display:none;position:fixed;top:12px;right:12px;z-index:2;color:#e8eefc;background:rgba(10,14,28,.75);padding:12px 16px;border-radius:10px;min-width:280px;backdrop-filter:blur(6px);font-size:14px">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px" id="workout-name">Workout</div>
+      <div style="margin:4px 0"><strong id="interval-name">—</strong></div>
+      <div style="margin:4px 0">Target: <strong id="target-watts">—</strong> W · Actual: <strong id="actual-watts">—</strong> W</div>
+      <div style="margin:4px 0">Interval: <strong id="interval-time">—</strong> · Total: <strong id="total-time">—</strong></div>
+      <div style="margin:8px 0 4px;font-size:12px;opacity:.8">Next: <span id="next-interval">—</span></div>
+      <div style="margin:8px 0">
+        <canvas id="workout-profile" width="280" height="40" style="width:100%;height:40px;border-radius:4px"></canvas>
+      </div>
+      <button id="stop-test-btn" style="display:none;margin-top:8px;padding:6px 12px;font-size:14px;border:0;border-radius:6px;background:#e74c3c;color:#fff;font-weight:700">Stop Test</button>
+    </div>
     <div id="hint">Real GPS routes · Mock data by default · BLE when FTMS/Power sensor found · +/− = virtual gears (trainer resistance)</div>
     <script type="module" src="/main.js"></script>
       <div id="shift-pad">
@@ -80,6 +91,40 @@
       <p style="margin:0 0 12px">Enter your FTP (Functional Threshold Power) so power zones match your fitness.</p>
       <label>Your FTP: <input id="ftp-input" type="number" min="50" max="600" step="1" style="width:90px;font-size:18px;padding:4px 6px;border-radius:6px;border:0"> W</label>
       <div style="margin-top:16px;text-align:right"><button id="ftp-ok" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#2e86de;color:#fff;font-weight:700">Continue</button></div>
+    </div>
+    <div id="mode-step" style="display:none">
+      <h2 style="margin:0 0 10px">Choose ride mode</h2>
+      <div style="margin:16px 0">
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="free" checked style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Free Ride</div>
+            <div style="opacity:.8;font-size:14px">Ride the route with grade-based simulation and virtual gears</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="ftp-ramp-test" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">FTP Ramp Test</div>
+            <div style="opacity:.8;font-size:14px">~35 min · Ramp +20W/min until failure to estimate FTP</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="sweet-spot" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Sweet Spot</div>
+            <div style="opacity:.8;font-size:14px">~35 min · 3×7 min at 88-93% FTP with active recovery</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="explosive-power" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Explosiveness / Power</div>
+            <div style="opacity:.8;font-size:14px">~35 min · 10×20s sprints at 150-200% FTP with recovery</div>
+          </div>
+        </label>
+      </div>
+      <div style="text-align:right"><button id="mode-ok" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#2e86de;color:#fff;font-weight:700">Continue</button></div>
     </div>
     <div id="route-step" style="display:none">
       <h2 style="margin:0 0 10px">Choose your route</h2>
