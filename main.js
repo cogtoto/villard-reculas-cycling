@@ -11,6 +11,7 @@ import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE
 import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
 import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
+import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
 
 installHeightFog(); // avant toute compilation de shader
 
@@ -362,6 +363,53 @@ function tick() {
         if (powerHistory.length > 60) powerHistory.shift();
         if (cadenceHistory.length > 60) cadenceHistory.shift();
         
+        // Coaching messages
+        const elapsedInInterval = current.interval.duration - current.intervalRemaining;
+        const nextIntervalIn = current.intervalRemaining; // Time until next interval
+        const timing = shouldShowMessage(performance.now(), current.index, nextIntervalIn);
+        
+        if (timing.show) {
+          let message = null;
+          
+          // Priority 1: Countdown messages (before sprints)
+          if (timing.reason === 'countdown') {
+            const messages = getCoachingMessage(currentWorkout, current, state.watts, elapsedInInterval, nextIntervalIn);
+            message = messages.countdown;
+          }
+          // Priority 2: Interval start messages
+          else if (timing.reason === 'intervalStart') {
+            const messages = getCoachingMessage(currentWorkout, current, state.watts, elapsedInInterval, nextIntervalIn);
+            message = messages.intervalStart;
+          }
+          // Priority 3: Regular coaching (performance, motivation, technique)
+          else if (timing.reason === 'regular') {
+            const messages = getCoachingMessage(currentWorkout, current, state.watts, elapsedInInterval, nextIntervalIn);
+            
+            // For ramp test, use special messages
+            if (currentWorkout.isTest && current.interval.type === 'ramp') {
+              message = getRampTestMessage(elapsed, powerHistory);
+            } else {
+              // Rotate through different message types
+              const types = ['performance', 'motivation', 'technique'];
+              const random = Math.random();
+              if (random < 0.5 && messages.performance) {
+                message = messages.performance;
+              } else if (random < 0.8 && messages.motivation) {
+                message = messages.motivation;
+              } else if (messages.technique) {
+                message = messages.technique;
+              }
+            }
+          }
+          
+          if (message && !timing.noTimerUpdate) {
+            showCoachingMessage(message);
+          } else if (message && timing.noTimerUpdate) {
+            // Countdown messages - show but don't reset timer
+            showCoachingMessage(message, true);
+          }
+        }
+        
         // Check for FTP test failure
         if (currentWorkout.isTest) {
           const failure = detectRampTestFailure(currentWorkout, powerHistory, cadenceHistory, elapsed);
@@ -476,6 +524,7 @@ function loadRoute() {
       if (currentWorkout) {
         console.log('Starting workout:', currentWorkout.name);
         workoutStartTime = performance.now();
+        resetCoachingTimer(); // Initialize coaching message timing
         startERGMode().then(success => {
           if (success) {
             console.log('ERG mode activated');
@@ -537,6 +586,36 @@ function drawWorkoutProfile(elapsed) {
   ctx.moveTo(x, 0);
   ctx.lineTo(x, height);
   ctx.stroke();
+}
+
+// Show coaching message with auto-fade
+let coachingTimeout = null;
+function showCoachingMessage(message, isCountdown = false) {
+  const banner = document.getElementById('coaching-message');
+  if (!banner) return;
+  
+  // Clear any existing timeout
+  if (coachingTimeout) {
+    clearTimeout(coachingTimeout);
+    coachingTimeout = null;
+  }
+  
+  // Remove fade-out class if present
+  banner.classList.remove('fade-out');
+  
+  // Set message and show
+  banner.textContent = message;
+  banner.style.display = 'block';
+  
+  // Auto-fade after delay (shorter for countdown messages)
+  const duration = isCountdown ? 2000 : 4000;
+  coachingTimeout = setTimeout(() => {
+    banner.classList.add('fade-out');
+    setTimeout(() => {
+      banner.style.display = 'none';
+      banner.classList.remove('fade-out');
+    }, 500); // Match animation duration
+  }, duration);
 }
 
 // Stop test button handler
