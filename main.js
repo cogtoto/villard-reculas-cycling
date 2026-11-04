@@ -12,6 +12,7 @@ import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNor
 import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
+import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
 
 installHeightFog(); // avant toute compilation de shader
 
@@ -183,6 +184,7 @@ alpineAtmosphere(scene, renderer, sun, sunDir);
 let seaMat = null;
 let groundAt = null; // hauteur du terrain (anti-caméra dans la pente)
 let updateMinimap = null;
+let villageSigns = []; // Village/hamlet road signs
 
 // --- Cycliste : vélo route aéro noir VAN RYSEL + coureur animé (rider.js) ---
 const riderModel = createRider();
@@ -416,11 +418,8 @@ function tick() {
           if (failure.failed) {
             console.log('FTP test failed:', failure.reason);
             const estimatedFTP = calculateEstimatedFTP(powerHistory);
-            alert(`Test stopped: ${failure.reason}\n\nEstimated FTP: ${estimatedFTP}W\n\nSave this as your new FTP?`);
-            // TODO: Offer to save FTP
-            stopERGMode();
-            currentWorkout = null;
-            document.getElementById('workout-hud').style.display = 'none';
+            const peak1MinPower = Math.round(Math.max(...powerHistory.slice(-60)));
+            showFTPResults(estimatedFTP, peak1MinPower, failure.reason);
           }
         }
         
@@ -445,6 +444,15 @@ function tick() {
     rider.position.set(pos.x, roadY + 0.42, pos.z);
     riderModel.update(dt, state.cadence, physV);
     if (updateMinimap) updateMinimap(pos, dir);
+    
+    // Check for village signs
+    if (villageSigns.length > 0) {
+      const signCheck = checkSignProximity(pos, villageSigns, distanceM);
+      if (signCheck.shouldShow) {
+        showCoachingMessage(signCheck.message, false);
+      }
+    }
+    
     rider.rotation.y = Math.atan2(dir.x, dir.z); // tangent à la route
     // Pente calculée depuis le GPX (prioritaire sur le mock serveur)
     hud.grade.textContent = gradePct.toFixed(1);
@@ -517,6 +525,18 @@ function loadRoute() {
       route.setupAtmosphere(scene, renderer, sun, sunDir);
       updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
       route.setupDecor(scene, track, terrain);
+      
+      // Load and place village signs
+      const villageFile = selectedRoute === 'normandy' ? 'normandy-villages.json' : 'villard-villages.json';
+      fetch(villageFile)
+        .then(res => res.json())
+        .then(villagesData => {
+          villageSigns = placeVillageSigns(scene, track, villagesData, terrain.heightAt);
+          console.log(`Placed ${villageSigns.length} village signs`);
+          resetSignAnnouncements();
+        })
+        .catch(err => console.warn('Village signs not loaded:', err));
+      
       const s = sampleTrack(track, 0);
       camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
       
@@ -626,22 +646,68 @@ function showCoachingMessage(message, isCountdown = false) {
   }, duration);
 }
 
+// Show FTP test results screen
+function showFTPResults(estimatedFTP, peak1MinPower, reason = 'Test complete') {
+  const oldFTP = FTP_W;
+  const diff = estimatedFTP - oldFTP;
+  const diffSign = diff > 0 ? '+' : '';
+  
+  // Update modal values
+  document.getElementById('ftp-new-value').textContent = `${estimatedFTP}W`;
+  document.getElementById('ftp-old-value').textContent = `${oldFTP}W`;
+  document.getElementById('ftp-diff-value').textContent = `${diffSign}${diff}W`;
+  document.getElementById('ftp-diff-value').style.color = diff > 0 ? '#27ae60' : diff < 0 ? '#e74c3c' : '#95a5a6';
+  document.getElementById('ftp-peak-value').textContent = `${peak1MinPower}W`;
+  
+  // Show coaching message
+  let message = `Test complete! Estimated FTP: ${estimatedFTP}W`;
+  if (diff > 0) {
+    message = `🎉 Great job! New FTP: ${estimatedFTP}W (+${diff}W improvement!)`;
+  } else if (diff < 0) {
+    message = `FTP estimated at ${estimatedFTP}W (${diff}W from previous)`;
+  }
+  showCoachingMessage(message, false);
+  
+  // Show modal
+  document.getElementById('ftp-results-modal').style.display = 'flex';
+  
+  // Stop ERG and hide workout HUD
+  stopERGMode();
+  document.getElementById('workout-hud').style.display = 'none';
+}
+
+// FTP Results modal button handlers
+const ftpSaveBtn = document.getElementById('ftp-save-btn');
+const ftpKeepBtn = document.getElementById('ftp-keep-btn');
+
+if (ftpSaveBtn) {
+  ftpSaveBtn.onclick = () => {
+    const newFTP = parseInt(document.getElementById('ftp-new-value').textContent);
+    FTP_W = newFTP;
+    localStorage.setItem(FTP_KEY, String(FTP_W));
+    document.getElementById('ftp').textContent = FTP_W;
+    document.getElementById('ftp-results-modal').style.display = 'none';
+    showCoachingMessage(`✓ FTP saved: ${FTP_W}W`, false);
+    currentWorkout = null;
+  };
+}
+
+if (ftpKeepBtn) {
+  ftpKeepBtn.onclick = () => {
+    document.getElementById('ftp-results-modal').style.display = 'none';
+    showCoachingMessage('FTP unchanged - keeping current value', false);
+    currentWorkout = null;
+  };
+}
+
 // Stop test button handler
 const stopTestBtn = document.getElementById('stop-test-btn');
 if (stopTestBtn) {
   stopTestBtn.onclick = () => {
     if (currentWorkout && currentWorkout.isTest) {
       const estimatedFTP = calculateEstimatedFTP(powerHistory);
-      const save = confirm(`Stopping test early.\n\nEstimated FTP: ${estimatedFTP}W\n\nSave this as your new FTP?`);
-      if (save && estimatedFTP) {
-        FTP_W = estimatedFTP;
-        localStorage.setItem(FTP_KEY, String(FTP_W));
-        document.getElementById('ftp').textContent = FTP_W;
-        alert(`FTP saved: ${FTP_W}W`);
-      }
-      stopERGMode();
-      currentWorkout = null;
-      document.getElementById('workout-hud').style.display = 'none';
+      const peak1MinPower = Math.round(Math.max(...powerHistory.slice(-60)));
+      showFTPResults(estimatedFTP, peak1MinPower, 'Test stopped early');
     }
   };
 }

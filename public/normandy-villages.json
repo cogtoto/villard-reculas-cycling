@@ -1,0 +1,52 @@
+{
+  "villages": [
+    {
+      "name": "Grandcamp-Maisy",
+      "lat": 49.39,
+      "lon": -1.04,
+      "type": "village"
+    },
+    {
+      "name": "Maisy",
+      "lat": 49.387,
+      "lon": -1.015,
+      "type": "village"
+    },
+    {
+      "name": "La Martinière",
+      "lat": 49.385,
+      "lon": -1.03,
+      "type": "hamlet"
+    },
+    {
+      "name": "Les Isles",
+      "lat": 49.38,
+      "lon": -1.02,
+      "type": "hamlet"
+    },
+    {
+      "name": "La Cambe",
+      "lat": 49.34,
+      "lon": -1.02,
+      "type": "village"
+    },
+    {
+      "name": "Le Carrefour",
+      "lat": 49.36,
+      "lon": -1.025,
+      "type": "locality"
+    },
+    {
+      "name": "Les Oubeaux",
+      "lat": 49.37,
+      "lon": -1.035,
+      "type": "hamlet"
+    },
+    {
+      "name": "Le Bourg",
+      "lat": 49.375,
+      "lon": -1.025,
+      "type": "hamlet"
+    }
+  ]
+}

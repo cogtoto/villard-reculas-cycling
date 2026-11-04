@@ -70,6 +70,40 @@
       </div>
       <button id="stop-test-btn" style="display:none;margin-top:8px;padding:6px 12px;font-size:14px;border:0;border-radius:6px;background:#e74c3c;color:#fff;font-weight:700">Stop Test</button>
     </div>
+    
+    <!-- FTP Test Results Modal -->
+    <div id="ftp-results-modal" class="vv-modal" style="display:none">
+      <div class="vv-box" style="max-width:500px;text-align:center">
+        <h2 style="margin:0 0 16px;font-size:28px;color:#2e86de">🎉 FTP Test Complete!</h2>
+        
+        <div style="background:rgba(46,134,222,0.12);padding:20px;border-radius:12px;margin:0 0 20px">
+          <div style="font-size:14px;opacity:0.75;margin-bottom:8px">Estimated FTP</div>
+          <div id="ftp-new-value" style="font-size:48px;font-weight:700;color:#2e86de;margin-bottom:4px">—</div>
+          <div style="font-size:13px;opacity:0.7">(75% of best 1-minute power)</div>
+        </div>
+        
+        <div style="display:flex;gap:16px;margin-bottom:20px">
+          <div style="flex:1;background:rgba(255,255,255,0.05);padding:16px;border-radius:8px">
+            <div style="font-size:13px;opacity:0.75;margin-bottom:6px">Previous FTP</div>
+            <div id="ftp-old-value" style="font-size:24px;font-weight:600">—</div>
+          </div>
+          <div style="flex:1;background:rgba(255,255,255,0.05);padding:16px;border-radius:8px">
+            <div style="font-size:13px;opacity:0.75;margin-bottom:6px">Change</div>
+            <div id="ftp-diff-value" style="font-size:24px;font-weight:600">—</div>
+          </div>
+          <div style="flex:1;background:rgba(255,255,255,0.05);padding:16px;border-radius:8px">
+            <div style="font-size:13px;opacity:0.75;margin-bottom:6px">Peak 1-min Power</div>
+            <div id="ftp-peak-value" style="font-size:24px;font-weight:600">—</div>
+          </div>
+        </div>
+        
+        <div style="display:flex;gap:12px;justify-content:center">
+          <button id="ftp-save-btn" class="vv-b" style="background:#27ae60;font-size:16px;padding:12px 24px">✓ Save as my FTP</button>
+          <button id="ftp-keep-btn" class="vv-b" style="background:#55606b;font-size:16px;padding:12px 24px">Keep current FTP</button>
+        </div>
+      </div>
+    </div>
+    
     <div id="hint">Real GPS routes · Mock data by default · BLE when FTMS/Power sensor found · +/− = virtual gears (trainer resistance)</div>
     <script type="module" src="/main.js"></script>
       <div id="shift-pad">
