@@ -316,8 +316,7 @@ function showStats() {
       ${card('Average power', Math.round(avgW) + ' W', Math.round((avgW / FTP_W) * 100) + ' % of your FTP')}
       ${card('Max power', Math.round(S.wMax) + ' W')}
       ${card('Normalized power', np ? Math.round(np) + ' W' : '—', 'how hard it really felt')}
-      ${card('Average cadence', S.cadT ? Math.round(S.cadSum / S.cadT) + ' rpm' : '—', 'pedal turns per minute')}
-      ${card('Virtual gear', S.elapsed ? (S.gearSum / S.elapsed).toFixed(1) : '—', S.elapsed ? `avg · range ${S.gearMin}–${S.gearMax} · ${S.shifts} shifts` : '')}</div>
+      ${card('Average cadence', S.cadT ? Math.round(S.cadSum / S.cadT) + ' rpm' : '—', 'pedal turns per minute')}</div>
     <div class="st-sec">Time in each power zone <span style="opacity:.6;font-weight:400">(your FTP: ${FTP_W} W)</span></div>${zones}`;
   document.getElementById('stats').style.display = 'flex';
 }
