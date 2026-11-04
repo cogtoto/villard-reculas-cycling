@@ -1,0 +1,24 @@
+{
+  "name": "velo-virtuel-companion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "android:add": "vite build && cap add android",
+    "android:sync": "vite build && cap sync android",
+    "android:open": "cap open android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:run": "npm run android:sync && cap run android"
+  },
+  "dependencies": {
+    "@capacitor-community/bluetooth-le": "^7.3.2",
+    "@capacitor/android": "^7.6.10",
+    "@capacitor/core": "^7.6.10"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.6.10",
+    "vite": "^6.0.0"
+  }
+}

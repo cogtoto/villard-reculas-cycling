@@ -11,9 +11,31 @@ const server = http.createServer((_req, res) => {
   res.end('velo-virtuel sensor server\n');
 });
 const wss = new WebSocketServer({ server });
+// Companion Android : se signale par {type:'hello', role:'companion'}, puis pousse {type:'companion', watts, cadence}
+// et {type:'shift', delta}. Le serveur relaie la télémétrie / les vitesses aux navigateurs, et renvoie au
+// companion les consignes {type:'sim', gradePct} émises par le navigateur (simulation FTMS).
+let companionOk = false, companionTs = 0;
+const companions = () => [...wss.clients].filter((c) => c.isCompanion && c.readyState === 1);
+const viewers = () => [...wss.clients].filter((c) => !c.isCompanion && c.readyState === 1);
 wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
-    try { const m = JSON.parse(raw); if (m.type === 'route') { clientGrade = Number(m.gradePct) || 0; clientAlt = Number(m.altM) || 0; } } catch {}
+    let m; try { m = JSON.parse(raw); } catch { return; }
+    if (m.type === 'hello' && m.role === 'companion') {
+      ws.isCompanion = true; console.log('[companion] connected', m.device || '');
+      ws.send(JSON.stringify({ type: 'welcome', gradePct: clientGrade }));
+      ws.on('close', () => { console.log('[companion] disconnected'); if (!companions().length) companionOk = false; });
+      return;
+    }
+    if (m.type === 'route') { clientGrade = Number(m.gradePct) || 0; clientAlt = Number(m.altM) || 0; }
+    else if (m.type === 'sim') { const d = JSON.stringify({ type: 'sim', gradePct: Number(m.gradePct) || 0 }); for (const c of companions()) c.send(d); }
+    else if (ws.isCompanion && m.type === 'companion') {
+      companionOk = true; companionTs = Date.now();
+      const watts = Number(m.watts) || 0;
+      live = { type: 'telemetry', watts, cadence: Number(m.cadence) || 0, gradePct: clientGrade,
+        speedKmh: speedFromWatts(watts, clientGrade), source: 'companion' + (m.sensor ? ' ' + m.sensor : ''), ts: Date.now() };
+      broadcast(live);
+    }
+    else if (ws.isCompanion && m.type === 'shift') { const d = JSON.stringify({ type: 'shift', delta: Math.sign(Number(m.delta) || 0) }); for (const c of viewers()) c.send(d); }
   });
 });
 
@@ -51,7 +73,7 @@ function mockSample() {
 
 function broadcast(msg) {
   const data = JSON.stringify(msg);
-  for (const client of wss.clients) {
+  for (const client of viewers()) {
     if (client.readyState === 1) client.send(data);
   }
 }
@@ -62,6 +84,7 @@ if (USE_BLE) {
   ble.bus.on('log', (m) => console.log('[ble]', m));
   ble.bus.on('error', (e) => console.warn('[ble]', e.message || e));
   ble.bus.on('telemetry', (t) => {
+    if (companionOk && Date.now() - companionTs < 3000) return; // le companion a priorité
     bleOk = true;
     live = {
       type: 'telemetry',
@@ -80,6 +103,7 @@ if (USE_BLE) {
 }
 
 setInterval(() => {
+  if (companionOk && Date.now() - companionTs < 3000) return; // companion is pushing
   if (bleOk) return; // BLE is pushing
   live = mockSample();
   broadcast(live);
@@ -89,6 +113,6 @@ wss.on('connection', (ws) => {
   ws.send(JSON.stringify(live));
 });
 
-server.listen(PORT, () => {
-  console.log(`Sensor server ws://localhost:${PORT} (BLE=${USE_BLE ? 'on' : 'off'}, mock fallback)`);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Sensor server ws://0.0.0.0:${PORT} (companion: ws://<PC-IP>:${PORT}) (BLE=${USE_BLE ? 'on' : 'off'}, mock fallback)`);
 });

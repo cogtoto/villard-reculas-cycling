@@ -1,0 +1,8 @@
+{
+  "appId": "fr.cognet.velovirtuel.companion",
+  "appName": "Velo Companion",
+  "webDir": "dist",
+  "server": { "androidScheme": "http", "cleartext": true },
+  "android": { "allowMixedContent": true },
+  "plugins": { "BluetoothLe": { "displayStrings": { "scanning": "Scanning…", "cancel": "Cancel", "availableDevices": "Available trainers", "noDeviceFound": "No trainer found" } } }
+}

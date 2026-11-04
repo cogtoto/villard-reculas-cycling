@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Velo Companion</title>
+<link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <h1>Velo Companion</h1>
+  <section class="card">
+    <h2>PC</h2>
+    <div class="row">
+      <input id="ip" placeholder="PC IP (e.g. 192.168.1.20)" inputmode="decimal" />
+      <input id="port" placeholder="Port" inputmode="numeric" value="8787" />
+    </div>
+    <button id="pc-btn">Connect PC</button>
+    <div class="status">PC: <span id="pc-status" class="off">disconnected</span></div>
+  </section>
+  <section class="card">
+    <h2>Home trainer</h2>
+    <button id="ble-btn">Connect HomeTrainer</button>
+    <div class="status">Trainer: <span id="ble-status" class="off">disconnected</span></div>
+    <div class="metrics">
+      <div><b id="watts">0</b><small>W</small></div>
+      <div><b id="cadence">0</b><small>rpm</small></div>
+      <div><b id="grade">0.0</b><small>% sim</small></div>
+    </div>
+    <div class="chart-head"><span>Power · last 3 min</span><span>Zone <b id="zone">Z1</b> · FTP <input id="ftp" inputmode="numeric" /> W</span></div>
+    <canvas id="chart"></canvas>
+  </section>
+  <section class="card">
+    <h2>Gears</h2>
+    <div class="gears">
+      <button id="gear-down" class="gear">−</button>
+      <button id="gear-up" class="gear">+</button>
+    </div>
+  </section>
+  <pre id="log"></pre>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

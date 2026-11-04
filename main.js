@@ -10,6 +10,7 @@ import { addRoadside } from './roadside.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
 import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
 import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
+import { buildTcx, saveFile, toLatLon } from './export.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
 import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
@@ -135,6 +136,7 @@ let rideStarted = false;
     
     intro.remove(); 
     rideStarted = true;
+    S.t0 = Date.now(); // Start timestamp for TCX export
     loadRoute(); // Load the selected route
   };
 }
@@ -239,7 +241,10 @@ const sensors = createSensors((msg) => {
       document.getElementById('pctftp').textContent = `(${Math.round(zn.pct)} %)`; }
     hud.cadence.textContent = Math.round(state.cadence);
     hud.source.textContent = state.source || 'ws';
-}, { onLog: (m) => console.log('[ble]', m) });
+}, { 
+    onLog: (m) => console.log('[ble]', m),
+    onShift: (delta) => shift(delta) // Companion app gear shift relay
+});
 shift(0);
 for (const [id, d] of [['shift-up', 1], ['shift-down', -1]]) { // gros boutons tactiles (paysage Android)
   const b = document.getElementById(id);
@@ -264,10 +269,16 @@ if (bleBtn) bleBtn.onclick = async () => {
 
 // --- Statistiques de sortie + bouton Stop ---
 const S = { elapsed: 0, moving: 0, dist: 0, maxV: 0, gain: 0, loss: 0, lastY: null, wSum: 0, wMax: 0, w30: [], np4: 0, npN: 0, npAcc: 0, npT: 0,
-  cadSum: 0, cadT: 0, zones: new Array(7).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
+  cadSum: 0, cadT: 0, t0: 0, nextSample: 0, samples: [], zones: new Array(7).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
 function recordStats(dt, here) {
   S.elapsed += dt;
   const v = physV, w = state.watts || 0;
+  // Sample 1 Hz for TCX export
+  if (S.elapsed >= S.nextSample) {
+    S.nextSample = Math.ceil(S.elapsed) + 1;
+    const [lat, lon] = toLatLon(track.origin, here.pos.x, here.pos.z);
+    S.samples.push({ t: S.t0 + S.elapsed * 1000, lat, lon, alt: here.pos.y, dist: S.dist, w, cad: state.cadence || 0, v });
+  }
   if (v > 0.5) S.moving += dt;
   S.dist += v * dt; S.maxV = Math.max(S.maxV, v);
   if (S.lastY != null) { const dy = here.pos.y - S.lastY; if (dy > 0) S.gain += dy; else S.loss -= dy; }
@@ -318,6 +329,21 @@ function showStats() {
   $('stop-yes').onclick = () => { confirmBox.style.display = 'none'; showStats(); };
   $('stats-resume').onclick = () => { $('stats').style.display = 'none'; rideStarted = true; };
   $('stats-end').onclick = () => location.reload(); // retour à l'écran d'accueil, nouvelle sortie
+  $('stats-garmin').onclick = async () => {
+    const btn = $('stats-garmin'), msg = $('stats-garmin-msg');
+    if (S.samples.length < 2) { msg.textContent = 'Ride a little longer first — not enough data yet.'; return; }
+    btn.disabled = true; btn.textContent = 'Exporting…';
+    const routeName = ROUTES[selectedRoute].name;
+    const name = routeName.replace(/[^a-z0-9]+/gi, '_') + '_' + new Date(S.t0).toISOString().slice(0, 10) + '.tcx';
+    try {
+      const how = await saveFile(name, buildTcx(S.samples, { name: routeName + ' (virtual ride)' }));
+      msg.textContent = how === 'shared' ? '✓ Shared to Garmin Connect / Drive / Email' : '✓ Downloaded — import into Garmin Connect';
+      btn.textContent = '✓ Exported'; btn.disabled = false;
+    } catch (e) {
+      msg.textContent = 'Export failed: ' + e.message;
+      btn.textContent = '⬇ Download for Garmin'; btn.disabled = false;
+    }
+  };
 }
 
 addEventListener('resize', () => {
