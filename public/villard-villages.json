@@ -1,52 +1,8 @@
-{
-  "villages": [
-    {
-      "name": "Villard-Reculas",
-      "lat": 45.135,
-      "lon": 6.035,
-      "type": "village"
-    },
-    {
-      "name": "Les Gauchoirs",
-      "lat": 45.125,
-      "lon": 6.032,
-      "type": "hamlet"
-    },
-    {
-      "name": "Le Pleynet",
-      "lat": 45.12,
-      "lon": 6.03,
-      "type": "hamlet"
-    },
-    {
-      "name": "Huez",
-      "lat": 45.095,
-      "lon": 6.065,
-      "type": "village"
-    },
-    {
-      "name": "Les Bergers",
-      "lat": 45.11,
-      "lon": 6.04,
-      "type": "hamlet"
-    },
-    {
-      "name": "Allemond",
-      "lat": 45.13,
-      "lon": 6.03,
-      "type": "village"
-    },
-    {
-      "name": "Le Rivier d'Allemond",
-      "lat": 45.125,
-      "lon": 6.025,
-      "type": "hamlet"
-    },
-    {
-      "name": "Oz-en-Oisans",
-      "lat": 45.14,
-      "lon": 6.05,
-      "type": "village"
-    }
-  ]
-}
+[
+  {
+    "name": "Villard-Reculas",
+    "lat": 45.092372,
+    "lon": 6.033969,
+    "note": "Village - track start position (Nominatim confirmed: Villard-Reculas, 38114)"
+  }
+]
