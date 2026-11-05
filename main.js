@@ -186,6 +186,7 @@ alpineAtmosphere(scene, renderer, sun, sunDir);
 let seaMat = null;
 let groundAt = null; // hauteur du terrain (anti-caméra dans la pente)
 let updateMinimap = null;
+let minimapCanvas = null; // Reference to minimap canvas for show/hide
 let villageSigns = []; // Village/hamlet road signs
 
 // --- Cycliste : vélo route aéro noir VAN RYSEL + coureur animé (rider.js) ---
@@ -549,6 +550,14 @@ function loadRoute() {
       groundAt = terrain.heightAt;
       route.setupAtmosphere(scene, renderer, sun, sunDir);
       updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
+      minimapCanvas = updateMinimap.canvas; // Store reference for show/hide
+      
+      // Hide minimap in workout modes (to avoid overlap with power indicators)
+      if (selectedMode !== 'free') {
+        minimapCanvas.style.display = 'none';
+        console.log('Minimap hidden: workout mode active');
+      }
+      
       route.setupDecor(scene, track, terrain);
       
       // Load and place village signs
