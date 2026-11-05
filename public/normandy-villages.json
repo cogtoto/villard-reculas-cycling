@@ -3,6 +3,54 @@
     "name": "Le Beuron",
     "lat": 49.035267,
     "lon": 0.509741,
-    "note": "Hamlet - track start position (user-confirmed ground truth)"
+    "osm_id": "user_groundtruth",
+    "entry_km": 0,
+    "exit_km": 0.26,
+    "pass": 1
+  },
+  {
+    "name": "La C\u00f4te",
+    "lat": 49.0455935,
+    "lon": 0.5001515,
+    "osm_id": 13439784575,
+    "entry_km": 1.19,
+    "exit_km": 1.45,
+    "pass": null
+  },
+  {
+    "name": "Grand-Camp",
+    "lat": 49.0464461,
+    "lon": 0.5271969,
+    "osm_id": 1472894583,
+    "entry_km": 3.12,
+    "exit_km": 3.7,
+    "pass": null
+  },
+  {
+    "name": "Saint-Quentin-des-Isles",
+    "lat": 49.04945,
+    "lon": 0.57835,
+    "osm_id": 1709222582,
+    "entry_km": 8.83,
+    "exit_km": 10.0,
+    "pass": null
+  },
+  {
+    "name": "Broglie",
+    "lat": 49.0087429,
+    "lon": 0.5280377,
+    "osm_id": 698906787,
+    "entry_km": 16.35,
+    "exit_km": 16.97,
+    "pass": null
+  },
+  {
+    "name": "Le Beuron",
+    "lat": 49.035267,
+    "lon": 0.509741,
+    "osm_id": "user_groundtruth",
+    "entry_km": 20.94,
+    "exit_km": 21.23,
+    "pass": 2
   }
 ]

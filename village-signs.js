@@ -1,4 +1,4 @@
-// French village/hamlet road signs for both routes
+// French village/hamlet road signs for both routes - using real OSM data
 import * as THREE from 'three';
 
 // Create a French-style village entry sign
@@ -81,165 +81,151 @@ function createSignPost(name, isExit = false) {
   );
   post.position.y = 1.25;
   post.castShadow = true;
+  post.receiveShadow = true;
   
-  group.add(signBoard);
-  group.add(post);
-  
+  group.add(signBoard, post);
   return group;
 }
 
-// Place signs along the track based on village data
+// Place village signs along the track using OSM data with entry/exit km
 export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
   const signs = [];
-  const villages = villagesData.villages;
   
-  if (!villages || villages.length === 0) return signs;
+  // Calculate cumulative distances
+  const cumDist = [0];
+  for (let i = 1; i < track.samples.length; i++) {
+    const prev = track.samples[i - 1];
+    const curr = track.samples[i];
+    const dx = curr.x - prev.x;
+    const dz = curr.z - prev.z;
+    const dist = Math.sqrt(dx * dx + dz * dz);
+    cumDist.push(cumDist[i - 1] + dist);
+  }
   
-  // Convert lat/lon to world coordinates
-  const origin = track.origin;
-  const R = 6371000;
-  const kLat = Math.cos((origin.lat0 * Math.PI) / 180);
+  const totalDist = cumDist[cumDist.length - 1];
   
-  const toWorld = (lat, lon) => {
-    const dLat = (origin.lat0 - lat) * Math.PI / 180;
-    const dLon = (lon - origin.lon0) * Math.PI / 180;
-    const x = dLon * R * kLat;
-    const z = -dLat * R;
-    return { x, z };
-  };
+  console.log(`Placing village signs from ${villagesData.length} OSM entries`);
   
-  // For each village, find the closest point on the track
-  villages.forEach(village => {
-    const villagePos = toWorld(village.lat, village.lon);
+  for (const village of villagesData) {
+    const entryDistM = village.entry_km * 1000;
+    const exitDistM = village.exit_km * 1000;
     
-    let closestDist = Infinity;
-    let closestIdx = 0;
-    let closestPoint = null;
+    // Find track indices for entry and exit
+    let entryIdx = cumDist.findIndex(d => d >= entryDistM);
+    let exitIdx = cumDist.findIndex(d => d >= exitDistM);
     
-    // Find closest track point
-    track.pts.forEach((pt, idx) => {
-      const dx = pt.x - villagePos.x;
-      const dz = pt.z - villagePos.z;
-      const dist = Math.sqrt(dx * dx + dz * dz);
+    if (entryIdx === -1) entryIdx = 0;
+    if (exitIdx === -1) exitIdx = track.samples.length - 1;
+    
+    const passInfo = village.pass ? ` (pass ${village.pass})` : '';
+    console.log(`  ${village.name}${passInfo}: entry ${village.entry_km} km (idx ${entryIdx}), exit ${village.exit_km} km (idx ${exitIdx})`);
+    
+    // Place entry sign (skip if starting inside)
+    if (entryIdx > 0) {
+      const entryPt = track.samples[entryIdx];
+      const prevPt = track.samples[Math.max(0, entryIdx - 5)];
       
-      if (dist < closestDist) {
-        closestDist = dist;
-        closestIdx = idx;
-        closestPoint = pt;
+      // Calculate direction vector (approach direction)
+      const dx = entryPt.x - prevPt.x;
+      const dz = entryPt.z - prevPt.z;
+      const len = Math.sqrt(dx * dx + dz * dz);
+      
+      if (len > 0) {
+        // Perpendicular offset (3.5m to the right when approaching)
+        const perpX = -dz / len;
+        const perpZ = dx / len;
+        
+        const signX = entryPt.x + perpX * 3.5;
+        const signZ = entryPt.z + perpZ * 3.5;
+        const signY = groundHeightFn(signX, signZ);
+        
+        const entrySign = createSignPost(village.name, false);
+        entrySign.position.set(signX, signY, signZ);
+        
+        // Orient sign to face approaching rider
+        const angle = Math.atan2(dx, dz);
+        entrySign.rotation.y = angle;
+        
+        scene.add(entrySign);
+        signs.push({
+          name: village.name,
+          type: 'entry',
+          position: { x: entryPt.x, z: entryPt.z },
+          distanceM: entryDistM,
+          announced: false,
+          pass: village.pass
+        });
       }
-    });
+    }
     
-    // Only place sign if village is reasonably close to track (within 2km)
-    if (closestDist > 2000) return;
-    
-    // Get direction at this point
-    const nextIdx = Math.min(closestIdx + 1, track.pts.length - 1);
-    const prevIdx = Math.max(closestIdx - 1, 0);
-    const dir = new THREE.Vector3(
-      track.pts[nextIdx].x - track.pts[prevIdx].x,
-      0,
-      track.pts[nextIdx].z - track.pts[prevIdx].z
-    ).normalize();
-    
-    // Place entry sign slightly before the closest point
-    const entryDistance = -50; // 50m before
-    const entryIdx = Math.max(0, closestIdx + Math.floor(entryDistance / 10));
-    const entryPoint = track.pts[entryIdx];
-    
-    // Calculate perpendicular offset (to the right of the road)
-    const perp = new THREE.Vector3(-dir.z, 0, dir.x);
-    const offset = 3.5; // 3.5m from road center
-    
-    // Entry sign
-    const entrySign = createSignPost(village.name, false);
-    const entryX = entryPoint.x + perp.x * offset;
-    const entryZ = entryPoint.z + perp.z * offset;
-    const entryY = groundHeightFn ? groundHeightFn(entryX, entryZ) : entryPoint.y;
-    
-    entrySign.position.set(entryX, entryY, entryZ);
-    
-    // Rotate to face the direction of travel
-    const angle = Math.atan2(dir.x, dir.z);
-    entrySign.rotation.y = angle;
-    
-    scene.add(entrySign);
-    signs.push({
-      type: 'entry',
-      name: village.name,
-      position: { x: entryX, y: entryY, z: entryZ },
-      trackDistance: closestIdx * 10, // Approximate distance along track
-      mesh: entrySign
-    });
-    
-    // Exit sign slightly after the closest point
-    const exitDistance = 150; // 150m after entry
-    const exitIdx = Math.min(track.pts.length - 1, closestIdx + Math.floor(exitDistance / 10));
-    const exitPoint = track.pts[exitIdx];
-    
-    const exitSign = createSignPost(village.name, true);
-    const exitX = exitPoint.x + perp.x * offset;
-    const exitZ = exitPoint.z + perp.z * offset;
-    const exitY = groundHeightFn ? groundHeightFn(exitX, exitZ) : exitPoint.y;
-    
-    exitSign.position.set(exitX, exitY, exitZ);
-    exitSign.rotation.y = angle;
-    
-    scene.add(exitSign);
-    signs.push({
-      type: 'exit',
-      name: village.name,
-      position: { x: exitX, y: exitY, z: exitZ },
-      trackDistance: (closestIdx + 15) * 10,
-      mesh: exitSign
-    });
-  });
+    // Place exit sign
+    if (exitIdx < track.samples.length - 1) {
+      const exitPt = track.samples[exitIdx];
+      const nextPt = track.samples[Math.min(track.samples.length - 1, exitIdx + 5)];
+      
+      // Calculate direction vector (departure direction)
+      const dx = nextPt.x - exitPt.x;
+      const dz = nextPt.z - exitPt.z;
+      const len = Math.sqrt(dx * dx + dz * dz);
+      
+      if (len > 0) {
+        // Perpendicular offset (3.5m to the right when departing)
+        const perpX = -dz / len;
+        const perpZ = dx / len;
+        
+        const signX = exitPt.x + perpX * 3.5;
+        const signZ = exitPt.z + perpZ * 3.5;
+        const signY = groundHeightFn(signX, signZ);
+        
+        const exitSign = createSignPost(village.name, true);
+        exitSign.position.set(signX, signY, signZ);
+        
+        // Orient sign to face departing rider
+        const angle = Math.atan2(dx, dz);
+        exitSign.rotation.y = angle;
+        
+        scene.add(exitSign);
+        signs.push({
+          name: village.name,
+          type: 'exit',
+          position: { x: exitPt.x, z: exitPt.z },
+          distanceM: exitDistM,
+          announced: false,
+          pass: village.pass
+        });
+      }
+    }
+  }
   
+  console.log(`✓ Placed ${signs.length} village signs total`);
   return signs;
 }
 
-// Check if rider is near a sign and should show toast
-let lastAnnouncedSign = null;
-
+// Check if rider is near any sign (for toast notifications)
 export function checkSignProximity(riderPos, signs, distanceAlongTrack) {
-  // Find signs within 20m ahead
-  const proximityRange = 20;
+  const ANNOUNCE_DISTANCE = 50; // meters
+  const announcements = [];
   
   for (const sign of signs) {
-    if (sign.type !== 'entry') continue;
-    
-    const dx = riderPos.x - sign.position.x;
-    const dz = riderPos.z - sign.position.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    
-    // If we're within range and haven't announced this sign yet
-    if (dist < proximityRange && lastAnnouncedSign !== sign.name) {
-      lastAnnouncedSign = sign.name;
-      return {
-        shouldShow: true,
-        message: `Entering ${sign.name}`
-      };
+    if (!sign.announced && sign.type === 'entry') {
+      const dx = riderPos.x - sign.position.x;
+      const dz = riderPos.z - sign.position.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+      
+      if (dist < ANNOUNCE_DISTANCE) {
+        sign.announced = true;
+        const passInfo = sign.pass ? ` (${sign.pass}${sign.pass === 1 ? 'st' : sign.pass === 2 ? 'nd' : sign.pass === 3 ? 'rd' : 'th'} time)` : '';
+        announcements.push(`Entering ${sign.name}${passInfo}`);
+      }
     }
   }
   
-  // Reset if we're far from all signs
-  let anyNear = false;
-  for (const sign of signs) {
-    const dx = riderPos.x - sign.position.x;
-    const dz = riderPos.z - sign.position.z;
-    const dist = Math.sqrt(dx * dx + dz * dz);
-    if (dist < 100) {
-      anyNear = true;
-      break;
-    }
-  }
-  
-  if (!anyNear) {
-    lastAnnouncedSign = null;
-  }
-  
-  return { shouldShow: false };
+  return announcements;
 }
 
-export function resetSignAnnouncements() {
-  lastAnnouncedSign = null;
+// Reset announcement flags (e.g., when starting a new ride)
+export function resetSignAnnouncements(signs) {
+  for (const sign of signs) {
+    sign.announced = false;
+  }
 }
