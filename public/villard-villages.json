@@ -4,15 +4,6 @@
     "lat": 45.0914971,
     "lon": 6.0313171,
     "osm_id": 34055469,
-    "entry_km": 0.0,
-    "exit_km": 0.0,
-    "pass": 0
-  },
-  {
-    "name": "Villard-Reculas",
-    "lat": 45.0914971,
-    "lon": 6.0313171,
-    "osm_id": 34055469,
     "entry_km": 0,
     "exit_km": 0.31,
     "pass": 1

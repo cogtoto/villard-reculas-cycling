@@ -120,8 +120,59 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
     const passInfo = village.pass ? ` (pass ${village.pass})` : '';
     console.log(`  ${village.name}${passInfo}: entry ${village.entry_km} km (idx ${entryIdx}), exit ${village.exit_km} km (idx ${exitIdx})`);
     
-    // Place entry sign (skip if starting inside)
-    if (entryIdx > 0) {
+    // Place entry sign
+    // Special handling for km 0: place sign 35m ahead of spawn so it's visible
+    if (entryIdx === 0 && entryDistM === 0) {
+      // Find a point ~35m ahead on the track
+      let aheadIdx = 0;
+      let aheadDist = 0;
+      for (let i = 1; i < cumDist.length; i++) {
+        if (cumDist[i] >= 35) {
+          aheadIdx = i;
+          aheadDist = cumDist[i];
+          break;
+        }
+      }
+      
+      if (aheadIdx > 0) {
+        const signPt = track.samples[aheadIdx];
+        const prevPt = track.samples[Math.max(0, aheadIdx - 5)];
+        
+        // Calculate direction vector (approach direction from spawn)
+        const dx = signPt.x - prevPt.x;
+        const dz = signPt.z - prevPt.z;
+        const len = Math.sqrt(dx * dx + dz * dz);
+        
+        if (len > 0) {
+          // Perpendicular offset (3.5m to the right)
+          const perpX = -dz / len;
+          const perpZ = dx / len;
+          
+          const signX = signPt.x + perpX * 3.5;
+          const signZ = signPt.z + perpZ * 3.5;
+          const signY = groundHeightFn(signX, signZ);
+          
+          const entrySign = createSignPost(village.name, false);
+          entrySign.position.set(signX, signY, signZ);
+          
+          // Orient sign to face approaching rider from spawn
+          const angle = Math.atan2(dx, dz);
+          entrySign.rotation.y = angle;
+          
+          scene.add(entrySign);
+          console.log(`  → Start sign placed at ${aheadDist.toFixed(0)}m ahead (visible from spawn)`);
+          signs.push({
+            name: village.name,
+            type: 'entry',
+            position: { x: signPt.x, z: signPt.z },
+            distanceM: aheadDist, // Use actual placement distance for proximity check
+            announced: false,
+            pass: village.pass
+          });
+        }
+      }
+    } else if (entryIdx > 0) {
+      // Normal entry sign placement (not at spawn)
       const entryPt = track.samples[entryIdx];
       const prevPt = track.samples[Math.max(0, entryIdx - 5)];
       
