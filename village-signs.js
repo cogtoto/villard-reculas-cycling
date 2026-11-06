@@ -1,91 +1,196 @@
 // French village/hamlet road signs for both routes - using real OSM data
 import * as THREE from 'three';
 
-// Create a French-style village entry sign
-// White rectangle with red border, black text
+// Create an authentic French agglomeration sign
+// White background, thick rounded red border, bold black text, rounded corners
 function createVillageSign(name, isExit = false) {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
+  canvas.width = 1024;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d');
   
-  // White background
+  const cornerRadius = 40;
+  const borderThickness = 32;
+  
+  // Draw rounded rectangle path
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+  
+  // Subtle gradient background for depth
+  const bgGradient = ctx.createLinearGradient(0, 0, 0, 512);
+  bgGradient.addColorStop(0, '#fafafa');
+  bgGradient.addColorStop(1, '#f0f0f0');
+  ctx.fillStyle = bgGradient;
+  roundRect(0, 0, 1024, 512, cornerRadius);
+  ctx.fill();
+  
+  // White main background
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, 512, 256);
+  roundRect(borderThickness / 2, borderThickness / 2, 
+            1024 - borderThickness, 512 - borderThickness, cornerRadius - borderThickness / 2);
+  ctx.fill();
   
-  // Red border (8px thick)
-  ctx.strokeStyle = '#e30613';
-  ctx.lineWidth = 16;
-  ctx.strokeRect(8, 8, 496, 240);
+  // Red border (thick, rounded, authentic French red)
+  ctx.strokeStyle = '#e30613'; // Official French signage red
+  ctx.lineWidth = borderThickness;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  roundRect(borderThickness / 2, borderThickness / 2, 
+            1024 - borderThickness, 512 - borderThickness, cornerRadius - borderThickness / 2);
+  ctx.stroke();
   
-  // Black text - village name
+  // Village name - bold, clean font
   ctx.fillStyle = '#000000';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   
   // Scale font size based on name length
-  let fontSize = 72;
-  if (name.length > 15) fontSize = 56;
-  if (name.length > 20) fontSize = 48;
+  let fontSize = 140;
+  if (name.length > 15) fontSize = 110;
+  if (name.length > 20) fontSize = 90;
+  if (name.length > 25) fontSize = 75;
   
-  ctx.font = `bold ${fontSize}px Arial, sans-serif`;
-  ctx.fillText(name, 256, 128);
+  ctx.font = `bold ${fontSize}px "Arial Black", sans-serif`;
+  ctx.fillText(name, 512, 256);
   
-  // If exit sign, add red diagonal bar
+  // If exit sign, add thick red diagonal bar (authentic exit style)
   if (isExit) {
     ctx.strokeStyle = '#e30613';
-    ctx.lineWidth = 12;
+    ctx.lineWidth = 28;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(40, 40);
-    ctx.lineTo(472, 216);
+    ctx.moveTo(80, 80);
+    ctx.lineTo(944, 432);
     ctx.stroke();
   }
   
   // Create texture from canvas
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4; // Better filtering for readability
   
   return texture;
 }
 
-// Create a 3D sign post with the village name
-function createSignPost(name, isExit = false) {
+// Create a 3D sign post with the village name - authentic French double-sided design
+function createSignPost(name, isEntry = true) {
   const group = new THREE.Group();
   
-  // Sign board - larger for better visibility (3m wide x 1.5m high, French standard)
+  // Sign dimensions (French standard agglomeration sign)
   const signWidth = 3.0;
   const signHeight = 1.5;
-  const signTexture = createVillageSign(name, isExit);
+  const signThickness = 0.08;
   
-  const signBoard = new THREE.Mesh(
-    new THREE.PlaneGeometry(signWidth, signHeight),
+  // Create textures for both faces
+  const entryTexture = createVillageSign(name, false); // Entry: no diagonal bar
+  const exitTexture = createVillageSign(name, true);   // Exit: with red diagonal bar
+  
+  // Sign board as a thin box with different textures on each face
+  const signGeo = new THREE.BoxGeometry(signWidth, signHeight, signThickness);
+  
+  // Create materials array for the box faces
+  // BoxGeometry face order: [right, left, top, bottom, front, back]
+  const materials = [
+    // Right edge (metal frame)
+    new THREE.MeshStandardMaterial({ 
+      color: 0xd0d0d0, 
+      roughness: 0.4, 
+      metalness: 0.6 
+    }),
+    // Left edge (metal frame)
+    new THREE.MeshStandardMaterial({ 
+      color: 0xd0d0d0, 
+      roughness: 0.4, 
+      metalness: 0.6 
+    }),
+    // Top edge (metal frame)
+    new THREE.MeshStandardMaterial({ 
+      color: 0xd0d0d0, 
+      roughness: 0.4, 
+      metalness: 0.6 
+    }),
+    // Bottom edge (metal frame)
+    new THREE.MeshStandardMaterial({ 
+      color: 0xd0d0d0, 
+      roughness: 0.4, 
+      metalness: 0.6 
+    }),
+    // Front face (entry side - rider approaching sees this)
     new THREE.MeshStandardMaterial({
-      map: signTexture,
-      roughness: 0.7,
+      map: entryTexture,
+      roughness: 0.5,
       metalness: 0.1,
-      side: THREE.DoubleSide,
       emissive: 0xffffff,
-      emissiveIntensity: 0.2 // Slight glow to ensure visibility
+      emissiveIntensity: 0.15
+    }),
+    // Back face (exit side - rider leaving sees this)
+    new THREE.MeshStandardMaterial({
+      map: exitTexture,
+      roughness: 0.5,
+      metalness: 0.1,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.15
     })
-  );
-  signBoard.position.y = 2.0; // Height above ground (sign center)
+  ];
+  
+  const signBoard = new THREE.Mesh(signGeo, materials);
+  signBoard.position.y = 2.2; // Height above ground
   signBoard.castShadow = true;
   signBoard.receiveShadow = true;
+  group.add(signBoard);
   
-  // Metal post (7cm diameter, 3m tall)
-  const post = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.07, 0.07, 3.0, 8),
-    new THREE.MeshStandardMaterial({
-      color: 0x707070,
-      roughness: 0.6,
-      metalness: 0.4
-    })
+  // Two galvanised steel posts (French standard: two posts on sides)
+  const postRadius = 0.05;
+  const postHeight = 3.2;
+  const postMaterial = new THREE.MeshStandardMaterial({
+    color: 0xa0a0a0, // Galvanised steel color
+    roughness: 0.5,
+    metalness: 0.7
+  });
+  
+  // Left post
+  const leftPost = new THREE.Mesh(
+    new THREE.CylinderGeometry(postRadius, postRadius, postHeight, 8),
+    postMaterial
   );
-  post.position.y = 1.5; // Post base to center
-  post.castShadow = true;
-  post.receiveShadow = true;
+  leftPost.position.set(-signWidth / 2 + 0.15, 1.6, 0);
+  leftPost.castShadow = true;
+  group.add(leftPost);
   
-  group.add(signBoard, post);
+  // Right post
+  const rightPost = new THREE.Mesh(
+    new THREE.CylinderGeometry(postRadius, postRadius, postHeight, 8),
+    postMaterial
+  );
+  rightPost.position.set(signWidth / 2 - 0.15, 1.6, 0);
+  rightPost.castShadow = true;
+  group.add(rightPost);
+  
+  // Horizontal mounting brackets (subtle detail)
+  const bracketGeo = new THREE.BoxGeometry(0.12, 0.06, signThickness + 0.04);
+  const bracketMat = postMaterial;
+  
+  for (const x of [-signWidth / 2 + 0.15, signWidth / 2 - 0.15]) {
+    const topBracket = new THREE.Mesh(bracketGeo, bracketMat);
+    topBracket.position.set(x, 2.2 + signHeight / 2 - 0.1, 0);
+    group.add(topBracket);
+    
+    const bottomBracket = new THREE.Mesh(bracketGeo, bracketMat);
+    bottomBracket.position.set(x, 2.2 - signHeight / 2 + 0.1, 0);
+    group.add(bottomBracket);
+  }
+  
   return group;
 }
 
@@ -164,8 +269,8 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
           const entrySign = createSignPost(village.name, false);
           entrySign.position.set(signX, signY, signZ);
           
-          // Orient sign to face approaching rider from spawn
-          const angle = Math.atan2(dx, dz);
+          // Orient sign to face approaching rider from spawn (face backward toward prevPt)
+          const angle = Math.atan2(dx, dz) + Math.PI;
           entrySign.rotation.y = angle;
           
           scene.add(entrySign);
@@ -202,8 +307,8 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         const entrySign = createSignPost(village.name, false);
         entrySign.position.set(signX, signY, signZ);
         
-        // Orient sign to face approaching rider
-        const angle = Math.atan2(dx, dz);
+        // Orient sign to face approaching rider (face backward toward prevPt)
+        const angle = Math.atan2(dx, dz) + Math.PI;
         entrySign.rotation.y = angle;
         
         scene.add(entrySign);
@@ -241,8 +346,8 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         const exitSign = createSignPost(village.name, true);
         exitSign.position.set(signX, signY, signZ);
         
-        // Orient sign to face departing rider
-        const angle = Math.atan2(dx, dz);
+        // Orient sign to face departing rider (face backward, rider sees it as they leave)
+        const angle = Math.atan2(dx, dz) + Math.PI;
         exitSign.rotation.y = angle;
         
         scene.add(exitSign);

@@ -8,9 +8,9 @@
       html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; font-family: system-ui, sans-serif; }
       #hud {
         position: fixed; top: 12px; left: 12px; z-index: 2;
-        color: #e8eefc; background: rgba(10,14,28,.65); padding: 10px 14px;
-        border-radius: 10px; min-width: 180px; backdrop-filter: blur(6px);
-        font-size: 14px; line-height: 1.5;
+        color: #e8eefc; background: rgba(10,14,28,.65); padding: 12px 16px;
+        border-radius: 10px; min-width: 210px; backdrop-filter: blur(6px);
+        font-size: 16px; line-height: 1.5;
       }
       #hud strong { color: #7aa2f7; }
       #hud .zone { display: inline-block; min-width: 2.2em; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-weight: 700; text-align: center; background: #555; color: #fff; }
@@ -112,14 +112,15 @@
       <button id="shift-down" aria-label="Gear down">−</button>
     </div>
     <style>
-      #shift-pad { position: fixed; right: 16px; bottom: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; z-index: 20; user-select: none; -webkit-user-select: none; }
-      #shift-pad button { width: 88px; height: 88px; border-radius: 50%; border: 2px solid rgba(255,255,255,.6); background: rgba(20,24,32,.6); color: #fff; font: 700 52px/1 system-ui, sans-serif; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+      #shift-pad { position: fixed; right: 16px; bottom: 40px; display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 20; user-select: none; -webkit-user-select: none; }
+      #shift-pad button { width: 62px; height: 62px; border-radius: 50%; border: 2px solid rgba(255,255,255,.6); background: rgba(20,24,32,.6); color: #fff; font: 700 36px/1 system-ui, sans-serif; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
       #shift-pad button:active { background: rgba(46,134,222,.85); transform: scale(.94); }
-      #shift-gear { min-width: 56px; padding: 4px 10px; border-radius: 10px; background: rgba(20,24,32,.6); color: #fff; font: 700 26px system-ui, sans-serif; text-align: center; }
+      #shift-gear { min-width: 40px; padding: 3px 8px; border-radius: 8px; background: rgba(20,24,32,.6); color: #fff; font: 700 18px system-ui, sans-serif; text-align: center; }
       @media (max-height: 520px) { /* paysage Android : même colonne que la minimap (right 12px, 200px de large) */
-        #shift-pad { flex-direction: row-reverse; justify-content: space-between; right: 12px; bottom: 20px; width: 200px; gap: 0; box-sizing: border-box; }
-        #shift-pad button { width: 64px; height: 64px; font-size: 40px; flex: none; }
-        #shift-gear { min-width: 0; width: 56px; box-sizing: border-box; padding: 4px 0; font-size: 22px; } }
+        #shift-pad { flex-direction: row-reverse; justify-content: space-between; right: 12px; bottom: 20px; width: 140px; gap: 0; box-sizing: border-box; }
+        #shift-pad button { width: 45px; height: 45px; font-size: 28px; flex: none; }
+        #shift-gear { min-width: 0; width: 40px; box-sizing: border-box; padding: 3px 0; font-size: 16px; }
+        #stop-btn { bottom: 55px; } }
     </style>
     <button id="stop-btn" aria-label="Stop ride">■ Stop</button>
     <div id="stop-confirm" class="vv-modal" style="display:none"><div class="vv-box" style="max-width:340px;text-align:center">
@@ -134,7 +135,7 @@
       <div style="margin-top:8px;text-align:right"><button id="stats-garmin" class="vv-b" style="background:#2e86de">⬇ Download for Garmin</button> <button id="stats-resume" class="vv-b" style="background:#27ae60">Resume ride</button> <button id="stats-end" class="vv-b" style="background:#e74c3c">End ride</button></div>
     </div></div>
     <style>
-      #stop-btn { position: fixed; left: 16px; bottom: 20px; z-index: 20; padding: 12px 20px; border-radius: 30px; border: 2px solid rgba(255,255,255,.6); background: rgba(192,57,43,.85); color: #fff; font: 700 20px system-ui, sans-serif; touch-action: manipulation; }
+      #stop-btn { position: fixed; left: 16px; bottom: 65px; z-index: 20; padding: 8px 14px; border-radius: 24px; border: 2px solid rgba(255,255,255,.6); background: rgba(192,57,43,.85); color: #fff; font: 700 14px system-ui, sans-serif; touch-action: manipulation; }
       #stop-btn:active { transform: scale(.94); }
       .vv-modal { position: fixed; inset: 0; z-index: 60; align-items: center; justify-content: center; background: rgba(10,20,30,.8); font: 15px system-ui, sans-serif; color: #fff; }
       .vv-box { margin: 12px; padding: 18px 20px; border-radius: 14px; background: #1d2b38; box-shadow: 0 8px 30px #0008; box-sizing: border-box; }

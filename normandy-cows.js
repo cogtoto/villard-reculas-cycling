@@ -166,21 +166,21 @@ export function addNormandyCows(scene, track, terrain) {
   
   // Find suitable pasture locations along route
   const isGoodPasture = (x, z) => {
-    if (terrain.distTo(x, z) < 25) return false; // Not too close to road
-    if (terrain.distTo(x, z) > 120) return false; // Not too far
+    if (terrain.distTo(x, z) < 20) return false; // Not too close to road
+    if (terrain.distTo(x, z) > 80) return false; // Closer to road for visibility
     if (terrain.slopeAt(x, z) > 0.25) return false; // Relatively flat
     if (terrain.waterAt && terrain.waterAt(x, z)) return false;
     const classif = terrain.classify(x, z);
     return classif !== 'rock' && classif !== 'sea' && classif !== 'town';
   };
   
-  // Create 4-6 pasture fields along the route
-  const fieldCount = 4 + Math.floor(rand() * 3);
+  // Create 5-7 pasture fields along the route (more fields for better visibility)
+  const fieldCount = 5 + Math.floor(rand() * 3);
   
   for (let f = 0; f < fieldCount; f++) {
-    // Find location along route
-    const targetDist = 2000 + (f * length / fieldCount) + (rand() - 0.5) * 1500;
-    if (targetDist < 1000 || targetDist > length - 1000) continue;
+    // Find location along route - distributed more evenly and closer to route
+    const targetDist = 1500 + (f * length / fieldCount) + (rand() - 0.5) * 1000;
+    if (targetDist < 800 || targetDist > length - 800) continue;
     
     let idx = 0;
     for (let i = 0; i < cum.length; i++) {
@@ -196,9 +196,9 @@ export function addNormandyCows(scene, track, terrain) {
     const tz = nextPt.z - pt.z;
     const tlen = Math.sqrt(tx * tx + tz * tz) || 1;
     
-    // Try to place field on either side of road
+    // Try to place field on either side of road - closer for visibility
     const side = rand() < 0.5 ? 1 : -1;
-    const offset = 35 + rand() * 30;
+    const offset = 25 + rand() * 25; // Reduced offset for better visibility
     const centerX = pt.x - (tz / tlen) * side * offset;
     const centerZ = pt.z + (tx / tlen) * side * offset;
     
@@ -258,15 +258,15 @@ export function addNormandyCows(scene, track, terrain) {
       
       // Random pose variation (standing, grazing, lying down)
       const pose = rand();
-      let scale = 1.0;
+      let scale = 1.2; // Increased base scale for better visibility
       let yOffset = 0;
       
       if (pose < 0.7) {
         // Standing/grazing
-        scale = 0.9 + rand() * 0.2;
+        scale = 1.1 + rand() * 0.3; // Larger cows
       } else {
         // Lying down
-        scale = 0.85 + rand() * 0.15;
+        scale = 1.0 + rand() * 0.2;
         yOffset = -0.3;
       }
       
