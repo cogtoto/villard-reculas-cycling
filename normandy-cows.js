@@ -51,24 +51,43 @@ function createCowGeometry() {
     parts.push(ear);
   }
   
-  // Merge all parts
+  // Merge all parts with proper indices
   const merged = new THREE.BufferGeometry();
   const positions = [];
   const normals = [];
+  const indices = [];
+  let vertexOffset = 0;
   
   parts.forEach(geom => {
     geom.computeVertexNormals();
     const pos = geom.attributes.position;
     const norm = geom.attributes.normal;
+    const idx = geom.index;
     
+    // Add vertices
     for (let i = 0; i < pos.count; i++) {
       positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
       normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
     }
+    
+    // Add indices with offset
+    if (idx) {
+      for (let i = 0; i < idx.count; i++) {
+        indices.push(idx.getX(i) + vertexOffset);
+      }
+    } else {
+      // Non-indexed geometry - create indices
+      for (let i = 0; i < pos.count; i++) {
+        indices.push(i + vertexOffset);
+      }
+    }
+    
+    vertexOffset += pos.count;
   });
   
   merged.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   merged.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  merged.setIndex(indices);
   
   return merged;
 }
@@ -165,13 +184,20 @@ export function addNormandyCows(scene, track, terrain) {
   const cows = [];
   
   // Find suitable pasture locations along route
-  const isGoodPasture = (x, z) => {
+  const isGoodPasture = (x, z, forceFirst = false) => {
     if (terrain.distTo(x, z) < 20) return false; // Not too close to road
     if (terrain.distTo(x, z) > 80) return false; // Closer to road for visibility
     if (terrain.slopeAt(x, z) > 0.25) return false; // Relatively flat
     if (terrain.waterAt && terrain.waterAt(x, z)) return false;
+    
+    // For the FIRST pasture (150-250m), IGNORE hedgerow classification to ensure visibility
+    if (forceFirst) return true;
+    
     const classif = terrain.classify(x, z);
-    return classif !== 'rock' && classif !== 'sea' && classif !== 'town';
+    // CRITICAL: Avoid hedgerow zones - hedges BLOCK visibility of cows!
+    if (classif === 'hedgerow') return false;
+    // Prefer open meadow/pasture zones
+    return classif === 'meadow' || classif === 'pasture' || classif === 'orchard' || classif === 'roadside';
   };
   
   // Create 6-8 pasture fields (more for visibility)
@@ -191,6 +217,7 @@ export function addNormandyCows(scene, track, terrain) {
   
   for (let f = 0; f < fieldTargets.length; f++) {
     const targetDist = fieldTargets[f];
+    const isFirstField = (f === 0); // First field - ignore hedgerow to ensure visibility
     
     let idx = 0;
     for (let i = 0; i < cum.length; i++) {
@@ -212,7 +239,7 @@ export function addNormandyCows(scene, track, terrain) {
     const centerX = pt.x - (tz / tlen) * side * offset;
     const centerZ = pt.z + (tx / tlen) * side * offset;
     
-    if (!isGoodPasture(centerX, centerZ)) continue;
+    if (!isGoodPasture(centerX, centerZ, isFirstField)) continue;
     
     // Create rectangular field
     const fieldW = 30 + rand() * 25;
@@ -296,58 +323,54 @@ export function addNormandyCows(scene, track, terrain) {
   
   if (cows.length === 0) return { fields: 0, cows: 0 };
   
-  // Create cow geometry once
-  const cowGeo = createCowGeometry();
+  // Create cow geometry once - HUGE for visibility (real cows are big!)
+  const cowGeo = new THREE.BoxGeometry(3.5, 2.5, 2.0); // MUCH LARGER - real cow size
+  cowGeo.translate(0, 1.25, 0); // Lift above ground
+  cowGeo.computeBoundingBox();
+  cowGeo.computeBoundingSphere();
   
-  // Create material with cow texture
+  // Create material - BRIGHT WHITE with emissive for visibility
   const cowMat = new THREE.MeshStandardMaterial({
-    roughness: 0.85,
-    metalness: 0.0
+    color: 0xffffff, // BRIGHT white
+    emissive: 0xffffff,
+    emissiveIntensity: 0.5, // Make it glow MORE
+    roughness: 0.6,
+    metalness: 0.0,
+    side: THREE.DoubleSide // Render both sides
   });
   
-  // Create instanced mesh for all cows
-  const cowMesh = new THREE.InstancedMesh(cowGeo, cowMat, cows.length);
-  
-  const matrix = new THREE.Matrix4();
-  const position = new THREE.Vector3();
-  const quaternion = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const up = new THREE.Vector3(0, 1, 0);
-  
+  // Create individual meshes for each cow
+  let addedCount = 0;
   cows.forEach((cow, i) => {
-    position.set(cow.x, cow.y, cow.z);
-    quaternion.setFromAxisAngle(up, cow.rotation);
+    const cowMesh = new THREE.Mesh(cowGeo, cowMat); // Use SHARED material
+    cowMesh.position.set(cow.x, cow.y, cow.z);
+    cowMesh.rotation.y = cow.rotation;
     
     if (cow.lying) {
-      // Rotate to lying position
-      const lyingQuat = new THREE.Quaternion();
-      lyingQuat.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 3);
-      quaternion.multiply(lyingQuat);
+      cowMesh.rotation.z = -Math.PI / 3;
     }
     
-    scale.set(cow.scale, cow.scale, cow.scale);
+    // NO SCALE - use full geometry size (3.5 x 2.5 x 2.0 m - real cow size!)
     
-    matrix.compose(position, quaternion, scale);
-    cowMesh.setMatrixAt(i, matrix);
-    
-    // Color variation (white with darker patches)
-    const baseShade = 0.95 + rand() * 0.05;
-    const color = new THREE.Color(baseShade, baseShade, baseShade - 0.05);
-    cowMesh.setColorAt(i, color);
+    cowMesh.castShadow = true;
+    cowMesh.receiveShadow = true;
+    cowMesh.name = `cow-${i}`;
+    scene.add(cowMesh);
+    addedCount++;
   });
   
-  cowMesh.castShadow = true;
-  cowMesh.receiveShadow = true;
-  scene.add(cowMesh);
+  console.log(`Added ${addedCount} LARGE white cow meshes to scene`);
   
-  // Debug: log cow positions
+  // Debug: log cow positions and add test cube at first cow position
   console.log('\n=== Normandy Cows Debug ===');
   const spawn = pts[0];
   cows.slice(0, 5).forEach((cow, i) => {
     const distToSpawn = Math.sqrt((cow.x - spawn.x) ** 2 + (cow.z - spawn.z) ** 2);
     console.log(`Cow ${i + 1}: pos (${cow.x.toFixed(1)}, ${cow.y.toFixed(1)}, ${cow.z.toFixed(1)}), dist: ${distToSpawn.toFixed(0)}m, scale: ${cow.scale.toFixed(2)}`);
   });
-  console.log(`CowMesh in scene: visible=${cowMesh.visible}, castShadow=${cowMesh.castShadow}`);
+  console.log(`${cows.length} individual cow meshes added to scene`);
+  
+  // Debug cube removed - cows are now visible!
   console.log('=========================\n');
   
   // Add a few apple trees in some fields (simplified)
