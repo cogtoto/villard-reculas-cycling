@@ -523,66 +523,8 @@ export function addNormandyVegetation(scene, track, terrain, max = 9000) {
   return oaks.length + beeches.length + apples.length + fieldHedges.length + roadHedges.length;
 }
 
-export function addNormandyCows(scene, track, terrain, max = 120) {
-  const cows = [];
-  const { pts } = track;
-  
-  for (let tries = 0; tries < 10000 && cows.length < max; tries++) {
-    const p = pts[Math.floor(rand() * pts.length)];
-    const a = rand() * Math.PI * 2, r = 15 + rand() * 600;
-    const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
-    const zc = terrain.classify(x, z);
-    
-    if ((zc !== 'meadow' && zc !== 'pasture') || terrain.distTo(x, z) < 12) continue;
-    if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 75)) continue;
-    if (cows.some((c) => (c.x - x) ** 2 + (c.z - z) ** 2 < 22)) continue;
-    
-    const y = terrain.heightAt(x, z);
-    cows.push({ x, y: y - 0.25, z, r: rand() * 6.28, v: rand() });
-  }
-
-  // Vache normande réaliste (proportions correctes)
-  const body = new THREE.BoxGeometry(2.2, 1.5, 1.1);
-  body.translate(0, 1.05, 0);
-  const head = new THREE.BoxGeometry(0.75, 0.65, 0.65);
-  head.translate(1.25, 1.15, 0);
-  const legs = [];
-  for (const [lx, lz] of [[-0.6, -0.35], [-0.6, 0.35], [0.6, -0.35], [0.6, 0.35]]) {
-    const leg = new THREE.CylinderGeometry(0.12, 0.12, 0.9, 6);
-    leg.translate(lx, 0.45, lz);
-    legs.push(leg);
-  }
-  
-  const geos = [body, head, ...legs];
-  const positions = geos.map(g => g.attributes.position.array);
-  const totalLength = positions.reduce((sum, arr) => sum + arr.length, 0);
-  const merged = new Float32Array(totalLength);
-  let offset = 0;
-  positions.forEach(arr => {
-    merged.set(arr, offset);
-    offset += arr.length;
-  });
-  
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(merged, 3));
-  geo.computeVertexNormals();
-
-  const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
-  const im = new THREE.InstancedMesh(geo, mat, cows.length);
-  const mx = new THREE.Matrix4(), quat = new THREE.Quaternion(), upVec = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
-  
-  cows.forEach((c, i) => {
-    quat.setFromAxisAngle(upVec, c.r);
-    im.setMatrixAt(i, mx.compose(new THREE.Vector3(c.x, c.y, c.z), quat, new THREE.Vector3(0.42, 0.42, 0.42)));
-    const base = c.v < 0.35 ? 0xf5f2ea : c.v < 0.65 ? 0x7a5a48 : c.v < 0.85 ? 0x352f28 : 0xffffff;
-    im.setColorAt(i, col.setHex(base));
-  });
-  im.castShadow = true;
-  im.receiveShadow = true;
-  scene.add(im);
-
-  return cows.length;
-}
+// Cows moved to normandy-cows.js for better organization
+export { addNormandyCows } from './normandy-cows.js';
 
 // Maisons à colombages ULTRA-DÉTAILLÉES
 function canvasTex(size, draw) {

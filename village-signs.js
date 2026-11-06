@@ -52,9 +52,9 @@ function createVillageSign(name, isExit = false) {
 function createSignPost(name, isExit = false) {
   const group = new THREE.Group();
   
-  // Sign board (2:1 ratio, ~2m wide)
-  const signWidth = 2.0;
-  const signHeight = 1.0;
+  // Sign board - larger for better visibility (3m wide x 1.5m high, French standard)
+  const signWidth = 3.0;
+  const signHeight = 1.5;
   const signTexture = createVillageSign(name, isExit);
   
   const signBoard = new THREE.Mesh(
@@ -63,23 +63,25 @@ function createSignPost(name, isExit = false) {
       map: signTexture,
       roughness: 0.7,
       metalness: 0.1,
-      side: THREE.DoubleSide
+      side: THREE.DoubleSide,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.2 // Slight glow to ensure visibility
     })
   );
-  signBoard.position.y = 1.8; // Height above ground
+  signBoard.position.y = 2.0; // Height above ground (sign center)
   signBoard.castShadow = true;
   signBoard.receiveShadow = true;
   
-  // Metal post (5cm diameter, 2.5m tall)
+  // Metal post (7cm diameter, 3m tall)
   const post = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.04, 0.04, 2.5, 8),
+    new THREE.CylinderGeometry(0.07, 0.07, 3.0, 8),
     new THREE.MeshStandardMaterial({
       color: 0x707070,
       roughness: 0.6,
       metalness: 0.4
     })
   );
-  post.position.y = 1.25;
+  post.position.y = 1.5; // Post base to center
   post.castShadow = true;
   post.receiveShadow = true;
   
@@ -91,11 +93,18 @@ function createSignPost(name, isExit = false) {
 export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
   const signs = [];
   
+  // Use track.pts for the actual track points
+  const samples = track.pts || track.samples || [];
+  if (samples.length === 0) {
+    console.error('No track points available for village signs');
+    return signs;
+  }
+  
   // Calculate cumulative distances
   const cumDist = [0];
-  for (let i = 1; i < track.samples.length; i++) {
-    const prev = track.samples[i - 1];
-    const curr = track.samples[i];
+  for (let i = 1; i < samples.length; i++) {
+    const prev = samples[i - 1];
+    const curr = samples[i];
     const dx = curr.x - prev.x;
     const dz = curr.z - prev.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
@@ -115,7 +124,7 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
     let exitIdx = cumDist.findIndex(d => d >= exitDistM);
     
     if (entryIdx === -1) entryIdx = 0;
-    if (exitIdx === -1) exitIdx = track.samples.length - 1;
+    if (exitIdx === -1) exitIdx = samples.length - 1;
     
     const passInfo = village.pass ? ` (pass ${village.pass})` : '';
     console.log(`  ${village.name}${passInfo}: entry ${village.entry_km} km (idx ${entryIdx}), exit ${village.exit_km} km (idx ${exitIdx})`);
@@ -135,8 +144,8 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
       }
       
       if (aheadIdx > 0) {
-        const signPt = track.samples[aheadIdx];
-        const prevPt = track.samples[Math.max(0, aheadIdx - 5)];
+        const signPt = samples[aheadIdx];
+        const prevPt = samples[Math.max(0, aheadIdx - 5)];
         
         // Calculate direction vector (approach direction from spawn)
         const dx = signPt.x - prevPt.x;
@@ -144,13 +153,13 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         const len = Math.sqrt(dx * dx + dz * dz);
         
         if (len > 0) {
-          // Perpendicular offset (3.5m to the right)
+          // Perpendicular offset (4.5m to the right, further from road edge)
           const perpX = -dz / len;
           const perpZ = dx / len;
           
-          const signX = signPt.x + perpX * 3.5;
-          const signZ = signPt.z + perpZ * 3.5;
-          const signY = groundHeightFn(signX, signZ);
+          const signX = signPt.x + perpX * 4.5;
+          const signZ = signPt.z + perpZ * 4.5;
+          const signY = groundHeightFn(signX, signZ) + 0.1; // Slight elevation to avoid burial
           
           const entrySign = createSignPost(village.name, false);
           entrySign.position.set(signX, signY, signZ);
@@ -160,12 +169,12 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
           entrySign.rotation.y = angle;
           
           scene.add(entrySign);
-          console.log(`  → Start sign placed at ${aheadDist.toFixed(0)}m ahead (visible from spawn)`);
+          console.log(`  → Start sign placed at ${aheadDist.toFixed(0)}m ahead, world pos: (${signX.toFixed(1)}, ${signY.toFixed(1)}, ${signZ.toFixed(1)})`);
           signs.push({
             name: village.name,
             type: 'entry',
             position: { x: signPt.x, z: signPt.z },
-            distanceM: aheadDist, // Use actual placement distance for proximity check
+            distanceM: aheadDist,
             announced: false,
             pass: village.pass
           });
@@ -173,8 +182,8 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
       }
     } else if (entryIdx > 0) {
       // Normal entry sign placement (not at spawn)
-      const entryPt = track.samples[entryIdx];
-      const prevPt = track.samples[Math.max(0, entryIdx - 5)];
+      const entryPt = samples[entryIdx];
+      const prevPt = samples[Math.max(0, entryIdx - 5)];
       
       // Calculate direction vector (approach direction)
       const dx = entryPt.x - prevPt.x;
@@ -182,13 +191,13 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
       const len = Math.sqrt(dx * dx + dz * dz);
       
       if (len > 0) {
-        // Perpendicular offset (3.5m to the right when approaching)
+        // Perpendicular offset (4.5m to the right when approaching)
         const perpX = -dz / len;
         const perpZ = dx / len;
         
-        const signX = entryPt.x + perpX * 3.5;
-        const signZ = entryPt.z + perpZ * 3.5;
-        const signY = groundHeightFn(signX, signZ);
+        const signX = entryPt.x + perpX * 4.5;
+        const signZ = entryPt.z + perpZ * 4.5;
+        const signY = groundHeightFn(signX, signZ) + 0.1; // Slight elevation
         
         const entrySign = createSignPost(village.name, false);
         entrySign.position.set(signX, signY, signZ);
@@ -198,6 +207,7 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         entrySign.rotation.y = angle;
         
         scene.add(entrySign);
+        console.log(`  → Entry sign at ${village.entry_km} km, world pos: (${signX.toFixed(1)}, ${signY.toFixed(1)}, ${signZ.toFixed(1)})`);
         signs.push({
           name: village.name,
           type: 'entry',
@@ -210,9 +220,9 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
     }
     
     // Place exit sign
-    if (exitIdx < track.samples.length - 1) {
-      const exitPt = track.samples[exitIdx];
-      const nextPt = track.samples[Math.min(track.samples.length - 1, exitIdx + 5)];
+    if (exitIdx < samples.length - 1) {
+      const exitPt = samples[exitIdx];
+      const nextPt = samples[Math.min(samples.length - 1, exitIdx + 5)];
       
       // Calculate direction vector (departure direction)
       const dx = nextPt.x - exitPt.x;
@@ -220,13 +230,13 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
       const len = Math.sqrt(dx * dx + dz * dz);
       
       if (len > 0) {
-        // Perpendicular offset (3.5m to the right when departing)
+        // Perpendicular offset (4.5m to the right when departing)
         const perpX = -dz / len;
         const perpZ = dx / len;
         
-        const signX = exitPt.x + perpX * 3.5;
-        const signZ = exitPt.z + perpZ * 3.5;
-        const signY = groundHeightFn(signX, signZ);
+        const signX = exitPt.x + perpX * 4.5;
+        const signZ = exitPt.z + perpZ * 4.5;
+        const signY = groundHeightFn(signX, signZ) + 0.1;
         
         const exitSign = createSignPost(village.name, true);
         exitSign.position.set(signX, signY, signZ);
@@ -236,6 +246,7 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         exitSign.rotation.y = angle;
         
         scene.add(exitSign);
+        console.log(`  → Exit sign at ${village.exit_km} km, world pos: (${signX.toFixed(1)}, ${signY.toFixed(1)}, ${signZ.toFixed(1)})`);
         signs.push({
           name: village.name,
           type: 'exit',
@@ -249,6 +260,22 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
   }
   
   console.log(`✓ Placed ${signs.length} village signs total`);
+  
+  // Debug summary: show sign positions vs nearest road point
+  console.log('\n=== Village Signs Summary ===');
+  signs.forEach((s, i) => {
+    const roadPt = samples.find(pt => 
+      Math.abs(pt.x - s.position.x) < 10 && Math.abs(pt.z - s.position.z) < 10
+    ) || samples[0];
+    const distToRoad = Math.sqrt(
+      (s.position.x - roadPt.x) ** 2 + (s.position.z - roadPt.z) ** 2
+    );
+    console.log(`${i + 1}. ${s.name} (${s.type}) at ${(s.distanceM / 1000).toFixed(2)} km`);
+    console.log(`   Sign world pos: (${s.position.x.toFixed(1)}, ?, ${s.position.z.toFixed(1)})`);
+    console.log(`   Nearest road: (${roadPt.x.toFixed(1)}, ?, ${roadPt.z.toFixed(1)}), dist: ${distToRoad.toFixed(1)}m`);
+  });
+  console.log('=========================\n');
+  
   return signs;
 }
 

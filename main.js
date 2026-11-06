@@ -561,15 +561,20 @@ function loadRoute() {
       route.setupDecor(scene, track, terrain);
       
       // Load and place village signs
-      const villageFile = selectedRoute === 'normandy' ? 'normandy-villages.json' : 'villard-villages.json';
+      const villageFile = selectedRoute === 'normandy' ? '/normandy-villages.json' : '/villard-villages.json';
+      console.log(`Loading village data from: ${villageFile}`);
       fetch(villageFile)
-        .then(res => res.json())
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
         .then(villagesData => {
+          console.log(`Village data loaded: ${villagesData.length} entries`);
           villageSigns = placeVillageSigns(scene, track, villagesData, terrain.heightAt);
           console.log(`Placed ${villageSigns.length} village signs`);
-          resetSignAnnouncements();
+          resetSignAnnouncements(villageSigns);
         })
-        .catch(err => console.warn('Village signs not loaded:', err));
+        .catch(err => console.error('Village signs not loaded:', err));
       
       const s = sampleTrack(track, 0);
       camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
