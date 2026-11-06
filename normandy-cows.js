@@ -174,13 +174,23 @@ export function addNormandyCows(scene, track, terrain) {
     return classif !== 'rock' && classif !== 'sea' && classif !== 'town';
   };
   
-  // Create 5-7 pasture fields along the route (more fields for better visibility)
-  const fieldCount = 5 + Math.floor(rand() * 3);
+  // Create 6-8 pasture fields (more for visibility)
+  // First field MUST be within first 300m for visibility test
+  const fieldTargets = [
+    150 + rand() * 100, // First field at 150-250m
+  ];
   
-  for (let f = 0; f < fieldCount; f++) {
-    // Find location along route - distributed more evenly and closer to route
-    const targetDist = 1500 + (f * length / fieldCount) + (rand() - 0.5) * 1000;
-    if (targetDist < 800 || targetDist > length - 800) continue;
+  // Add 5-7 more fields distributed along route
+  const additionalFields = 5 + Math.floor(rand() * 3);
+  for (let f = 0; f < additionalFields; f++) {
+    const targetDist = 1000 + (f * (length - 2000) / additionalFields) + (rand() - 0.5) * 800;
+    if (targetDist > 500 && targetDist < length - 800) {
+      fieldTargets.push(targetDist);
+    }
+  }
+  
+  for (let f = 0; f < fieldTargets.length; f++) {
+    const targetDist = fieldTargets[f];
     
     let idx = 0;
     for (let i = 0; i < cum.length; i++) {
@@ -329,6 +339,16 @@ export function addNormandyCows(scene, track, terrain) {
   cowMesh.castShadow = true;
   cowMesh.receiveShadow = true;
   scene.add(cowMesh);
+  
+  // Debug: log cow positions
+  console.log('\n=== Normandy Cows Debug ===');
+  const spawn = pts[0];
+  cows.slice(0, 5).forEach((cow, i) => {
+    const distToSpawn = Math.sqrt((cow.x - spawn.x) ** 2 + (cow.z - spawn.z) ** 2);
+    console.log(`Cow ${i + 1}: pos (${cow.x.toFixed(1)}, ${cow.y.toFixed(1)}, ${cow.z.toFixed(1)}), dist: ${distToSpawn.toFixed(0)}m, scale: ${cow.scale.toFixed(2)}`);
+  });
+  console.log(`CowMesh in scene: visible=${cowMesh.visible}, castShadow=${cowMesh.castShadow}`);
+  console.log('=========================\n');
   
   // Add a few apple trees in some fields (simplified)
   const treeMat = new THREE.MeshStandardMaterial({

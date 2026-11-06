@@ -258,20 +258,30 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         const len = Math.sqrt(dx * dx + dz * dz);
         
         if (len > 0) {
-          // Perpendicular offset (4.5m to the right, further from road edge)
-          const perpX = -dz / len;
-          const perpZ = dx / len;
+          // Perpendicular offset: RIGHT side of road (positive perpendicular)
+          const perpX = dz / len;   // Perpendicular right
+          const perpZ = -dx / len;
           
           const signX = signPt.x + perpX * 4.5;
           const signZ = signPt.z + perpZ * 4.5;
-          const signY = groundHeightFn(signX, signZ) + 0.1; // Slight elevation to avoid burial
+          const signY = groundHeightFn(signX, signZ) + 0.1;
           
           const entrySign = createSignPost(village.name, false);
           entrySign.position.set(signX, signY, signZ);
           
-          // Orient sign to face approaching rider from spawn (face backward toward prevPt)
-          const angle = Math.atan2(dx, dz) + Math.PI;
+          // Orient sign to face approaching rider (perpendicular to road, facing back toward spawn)
+          // The sign should face toward the prevPt (spawn direction)
+          const toRiderX = prevPt.x - signX;
+          const toRiderZ = prevPt.z - signZ;
+          const angle = Math.atan2(toRiderX, toRiderZ);
           entrySign.rotation.y = angle;
+          
+          // Debug: check if sign faces rider
+          const signNormalX = Math.sin(angle);
+          const signNormalZ = Math.cos(angle);
+          const toRiderLen = Math.sqrt(toRiderX * toRiderX + toRiderZ * toRiderZ);
+          const dotProduct = (signNormalX * toRiderX + signNormalZ * toRiderZ) / toRiderLen;
+          console.log(`  → Start sign dot product (should be >0.5): ${dotProduct.toFixed(2)}`);
           
           scene.add(entrySign);
           console.log(`  → Start sign placed at ${aheadDist.toFixed(0)}m ahead, world pos: (${signX.toFixed(1)}, ${signY.toFixed(1)}, ${signZ.toFixed(1)})`);
@@ -296,19 +306,21 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
       const len = Math.sqrt(dx * dx + dz * dz);
       
       if (len > 0) {
-        // Perpendicular offset (4.5m to the right when approaching)
-        const perpX = -dz / len;
-        const perpZ = dx / len;
+        // Perpendicular offset: RIGHT side of road
+        const perpX = dz / len;
+        const perpZ = -dx / len;
         
         const signX = entryPt.x + perpX * 4.5;
         const signZ = entryPt.z + perpZ * 4.5;
-        const signY = groundHeightFn(signX, signZ) + 0.1; // Slight elevation
+        const signY = groundHeightFn(signX, signZ) + 0.1;
         
         const entrySign = createSignPost(village.name, false);
         entrySign.position.set(signX, signY, signZ);
         
-        // Orient sign to face approaching rider (face backward toward prevPt)
-        const angle = Math.atan2(dx, dz) + Math.PI;
+        // Orient sign to face approaching rider (toward prevPt direction)
+        const toRiderX = prevPt.x - signX;
+        const toRiderZ = prevPt.z - signZ;
+        const angle = Math.atan2(toRiderX, toRiderZ);
         entrySign.rotation.y = angle;
         
         scene.add(entrySign);
@@ -335,9 +347,9 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
       const len = Math.sqrt(dx * dx + dz * dz);
       
       if (len > 0) {
-        // Perpendicular offset (4.5m to the right when departing)
-        const perpX = -dz / len;
-        const perpZ = dx / len;
+        // Perpendicular offset: RIGHT side of road
+        const perpX = dz / len;
+        const perpZ = -dx / len;
         
         const signX = exitPt.x + perpX * 4.5;
         const signZ = exitPt.z + perpZ * 4.5;
@@ -346,8 +358,10 @@ export function placeVillageSigns(scene, track, villagesData, groundHeightFn) {
         const exitSign = createSignPost(village.name, true);
         exitSign.position.set(signX, signY, signZ);
         
-        // Orient sign to face departing rider (face backward, rider sees it as they leave)
-        const angle = Math.atan2(dx, dz) + Math.PI;
+        // Orient sign to face departing rider (toward nextPt direction, rider's leaving direction)
+        const toRiderX = nextPt.x - signX;
+        const toRiderZ = nextPt.z - signZ;
+        const angle = Math.atan2(toRiderX, toRiderZ);
         exitSign.rotation.y = angle;
         
         scene.add(exitSign);
