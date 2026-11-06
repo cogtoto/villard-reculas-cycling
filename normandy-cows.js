@@ -4,79 +4,117 @@ import * as THREE from 'three';
 let seed = 7777;
 const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 
-// Create a single low-poly Normandy cow
+// Create detailed Normandy cow - readable from 20m
 function createCowGeometry() {
-  const parts = [];
+  const group = new THREE.Group();
   
-  // Body (elongated box)
-  const body = new THREE.BoxGeometry(1.4, 0.8, 0.6);
-  body.translate(0, 0.9, 0);
-  parts.push(body);
+  // Body (large, elongated)
+  const bodyGeo = new THREE.BoxGeometry(2.2, 1.2, 1.0);
+  const body = new THREE.Mesh(bodyGeo);
+  body.position.set(0, 1.3, 0);
+  group.add(body);
   
-  // Head (smaller box, slightly angled down)
-  const head = new THREE.BoxGeometry(0.5, 0.4, 0.4);
-  head.translate(0.85, 1.0, 0);
-  parts.push(head);
+  // Neck (connect body to head)
+  const neckGeo = new THREE.CylinderGeometry(0.35, 0.45, 0.6, 8);
+  const neck = new THREE.Mesh(neckGeo);
+  neck.position.set(0.9, 1.6, 0);
+  neck.rotation.z = Math.PI / 6;
+  group.add(neck);
   
-  // Neck connection
-  const neck = new THREE.BoxGeometry(0.25, 0.5, 0.45);
-  neck.translate(0.6, 0.95, 0);
-  parts.push(neck);
+  // Head (large, distinct)
+  const headGeo = new THREE.BoxGeometry(0.7, 0.6, 0.6);
+  const head = new THREE.Mesh(headGeo);
+  head.position.set(1.4, 1.7, 0);
+  group.add(head);
   
-  // Legs (4 simple cylinders)
-  const legGeo = new THREE.CylinderGeometry(0.08, 0.08, 0.7, 6);
-  for (const [x, z] of [[0.45, 0.22], [0.45, -0.22], [-0.45, 0.22], [-0.45, -0.22]]) {
-    const leg = legGeo.clone();
-    leg.translate(x, 0.35, z);
-    parts.push(leg);
-  }
+  // Snout/muzzle
+  const snoutGeo = new THREE.BoxGeometry(0.4, 0.35, 0.5);
+  const snout = new THREE.Mesh(snoutGeo);
+  snout.position.set(1.7, 1.55, 0);
+  group.add(snout);
   
-  // Udder (small sphere under back)
-  const udder = new THREE.SphereGeometry(0.18, 8, 6);
-  udder.translate(-0.3, 0.65, 0);
-  udder.scale(1, 0.7, 1.2);
-  parts.push(udder);
-  
-  // Tail (thin cylinder)
-  const tail = new THREE.CylinderGeometry(0.03, 0.02, 0.6, 4);
-  tail.rotateZ(Math.PI / 3);
-  tail.translate(-0.7, 1.0, 0);
-  parts.push(tail);
-  
-  // Ears (small triangular flaps)
+  // Horns (visible)
   for (const side of [-1, 1]) {
-    const ear = new THREE.ConeGeometry(0.08, 0.15, 4);
-    ear.rotateZ(Math.PI / 2);
-    ear.translate(1.0, 1.15, side * 0.15);
-    parts.push(ear);
+    const hornGeo = new THREE.ConeGeometry(0.06, 0.35, 6);
+    const horn = new THREE.Mesh(hornGeo);
+    horn.position.set(1.35, 2.05, side * 0.25);
+    horn.rotation.z = side * Math.PI / 8;
+    group.add(horn);
   }
   
-  // Merge all parts with proper indices
+  // Ears (large, visible)
+  for (const side of [-1, 1]) {
+    const earGeo = new THREE.BoxGeometry(0.25, 0.3, 0.08);
+    const ear = new THREE.Mesh(earGeo);
+    ear.position.set(1.25, 1.85, side * 0.35);
+    ear.rotation.y = side * Math.PI / 4;
+    group.add(ear);
+  }
+  
+  // Eye spectacles (dark patches around eyes) - as boxes
+  for (const side of [-1, 1]) {
+    const eyePatchGeo = new THREE.BoxGeometry(0.3, 0.25, 0.15);
+    const eyePatch = new THREE.Mesh(eyePatchGeo);
+    eyePatch.position.set(1.5, 1.75, side * 0.25);
+    group.add(eyePatch);
+  }
+  
+  // Legs (4 distinct cylinders, thicker)
+  const legGeo = new THREE.CylinderGeometry(0.15, 0.13, 1.1, 8);
+  const legPositions = [[0.7, 0.55, 0.4], [0.7, 0.55, -0.4], [-0.7, 0.55, 0.4], [-0.7, 0.55, -0.4]];
+  legPositions.forEach(([x, y, z]) => {
+    const leg = new THREE.Mesh(legGeo);
+    leg.position.set(x, y, z);
+    group.add(leg);
+  });
+  
+  // Udder (visible, large)
+  const udderGeo = new THREE.SphereGeometry(0.28, 12, 10);
+  const udder = new THREE.Mesh(udderGeo);
+  udder.position.set(-0.5, 0.9, 0);
+  udder.scale.set(1, 0.8, 1.3);
+  group.add(udder);
+  
+  // Tail (visible)
+  const tailGeo = new THREE.CylinderGeometry(0.05, 0.03, 0.9, 6);
+  const tail = new THREE.Mesh(tailGeo);
+  tail.position.set(-1.1, 1.3, 0.1);
+  tail.rotation.z = Math.PI / 3;
+  group.add(tail);
+  
+  // Merge group into single geometry
+  group.updateMatrixWorld(true);
+  const geometries = [];
+  group.traverse((child) => {
+    if (child instanceof THREE.Mesh && child.geometry) {
+      const geo = child.geometry.clone();
+      geo.applyMatrix4(child.matrixWorld);
+      geometries.push(geo);
+    }
+  });
+  
   const merged = new THREE.BufferGeometry();
   const positions = [];
   const normals = [];
   const indices = [];
   let vertexOffset = 0;
   
-  parts.forEach(geom => {
+  geometries.forEach(geom => {
     geom.computeVertexNormals();
     const pos = geom.attributes.position;
     const norm = geom.attributes.normal;
     const idx = geom.index;
     
-    // Add vertices
     for (let i = 0; i < pos.count; i++) {
       positions.push(pos.getX(i), pos.getY(i), pos.getZ(i));
       normals.push(norm.getX(i), norm.getY(i), norm.getZ(i));
     }
     
-    // Add indices with offset
     if (idx) {
       for (let i = 0; i < idx.count; i++) {
         indices.push(idx.getX(i) + vertexOffset);
       }
     } else {
-      // Non-indexed geometry - create indices
       for (let i = 0; i < pos.count; i++) {
         indices.push(i + vertexOffset);
       }
@@ -92,32 +130,41 @@ function createCowGeometry() {
   return merged;
 }
 
-// Create cow texture with white base and brown/black patches
+// Create Normandy cow texture: white with brown patches and dark eye spectacles
 function createCowTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 256;
+  canvas.width = 512;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d');
   
-  // White base
-  ctx.fillStyle = '#f5f5f0';
-  ctx.fillRect(0, 0, 256, 256);
+  // White base coat
+  ctx.fillStyle = '#faf8f0';
+  ctx.fillRect(0, 0, 512, 512);
   
-  // Random brown/black patches
-  const patchCount = 8 + Math.floor(rand() * 6);
+  // Brown patches (irregular shapes)
+  const patchCount = 6 + Math.floor(rand() * 5);
   for (let i = 0; i < patchCount; i++) {
-    const isDark = rand() > 0.6;
-    ctx.fillStyle = isDark ? '#2a1810' : '#6a4a3a';
+    const isDark = rand() > 0.5;
+    ctx.fillStyle = isDark ? '#3d2817' : '#6b4423';
     
-    const x = rand() * 256;
-    const y = rand() * 256;
-    const w = 30 + rand() * 60;
-    const h = 30 + rand() * 60;
+    const x = rand() * 512;
+    const y = rand() * 512;
+    const w = 40 + rand() * 80;
+    const h = 40 + rand() * 80;
     
     ctx.beginPath();
     ctx.ellipse(x, y, w, h, rand() * Math.PI, 0, Math.PI * 2);
     ctx.fill();
   }
+  
+  // Eye spectacles (dark brown patches) - characteristic of Normandy cows
+  ctx.fillStyle = '#3d2817';
+  ctx.beginPath();
+  ctx.ellipse(400, 100, 45, 50, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(480, 100, 45, 50, 0, 0, Math.PI * 2);
+  ctx.fill();
   
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -183,20 +230,27 @@ export function addNormandyCows(scene, track, terrain) {
   const fields = [];
   const cows = [];
   
-  // Find suitable pasture locations along route
+  // Find suitable pasture locations - VERY CLOSE to road!
   const isGoodPasture = (x, z, forceFirst = false) => {
-    if (terrain.distTo(x, z) < 20) return false; // Not too close to road
-    if (terrain.distTo(x, z) > 80) return false; // Closer to road for visibility
-    if (terrain.slopeAt(x, z) > 0.25) return false; // Relatively flat
+    const distToRoad = terrain.distTo(x, z);
+    
+    // For FIRST pasture: fence 8-15m, cows 12-30m from road
+    if (forceFirst) {
+      if (distToRoad < 8) return false; // Not ON the road
+      if (distToRoad > 25) return false; // Must be VERY close
+      if (terrain.slopeAt(x, z) > 0.25) return false;
+      if (terrain.waterAt && terrain.waterAt(x, z)) return false;
+      return true; // Ignore hedgerow for first pasture
+    }
+    
+    // Other pastures: closer (10-50m)
+    if (distToRoad < 10) return false;
+    if (distToRoad > 50) return false;
+    if (terrain.slopeAt(x, z) > 0.25) return false;
     if (terrain.waterAt && terrain.waterAt(x, z)) return false;
     
-    // For the FIRST pasture (150-250m), IGNORE hedgerow classification to ensure visibility
-    if (forceFirst) return true;
-    
     const classif = terrain.classify(x, z);
-    // CRITICAL: Avoid hedgerow zones - hedges BLOCK visibility of cows!
     if (classif === 'hedgerow') return false;
-    // Prefer open meadow/pasture zones
     return classif === 'meadow' || classif === 'pasture' || classif === 'orchard' || classif === 'roadside';
   };
   
@@ -233,9 +287,10 @@ export function addNormandyCows(scene, track, terrain) {
     const tz = nextPt.z - pt.z;
     const tlen = Math.sqrt(tx * tx + tz * tz) || 1;
     
-    // Try to place field on either side of road - closer for visibility
+    // Place field VERY CLOSE to road
     const side = rand() < 0.5 ? 1 : -1;
-    const offset = 25 + rand() * 25; // Reduced offset for better visibility
+    // First field: 12-20m offset (very close), others: 15-35m
+    const offset = isFirstField ? (12 + rand() * 8) : (15 + rand() * 20);
     const centerX = pt.x - (tz / tlen) * side * offset;
     const centerZ = pt.z + (tx / tlen) * side * offset;
     
@@ -323,43 +378,34 @@ export function addNormandyCows(scene, track, terrain) {
   
   if (cows.length === 0) return { fields: 0, cows: 0 };
   
-  // Create cow geometry once - HUGE for visibility (real cows are big!)
-  const cowGeo = new THREE.BoxGeometry(3.5, 2.5, 2.0); // MUCH LARGER - real cow size
-  cowGeo.translate(0, 1.25, 0); // Lift above ground
-  cowGeo.computeBoundingBox();
-  cowGeo.computeBoundingSphere();
-  
-  // Create material - BRIGHT WHITE with emissive for visibility
-  const cowMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, // BRIGHT white
-    emissive: 0xffffff,
-    emissiveIntensity: 0.5, // Make it glow MORE
-    roughness: 0.6,
-    metalness: 0.0,
-    side: THREE.DoubleSide // Render both sides
-  });
-  
-  // Create individual meshes for each cow
+  // Create GIANT GLOWING cows - IMPOSSIBLE TO MISS!
   let addedCount = 0;
+  
   cows.forEach((cow, i) => {
-    const cowMesh = new THREE.Mesh(cowGeo, cowMat); // Use SHARED material
-    cowMesh.position.set(cow.x, cow.y, cow.z);
-    cowMesh.rotation.y = cow.rotation;
+    // SINGLE GIANT BOX - white glowing
+    const giantCowGeo = new THREE.BoxGeometry(5.0, 4.0, 3.0); // HUGE!
+    const giantCowMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.8, // GLOW!
+      roughness: 0.5
+    });
+    const giantCow = new THREE.Mesh(giantCowGeo, giantCowMat);
+    giantCow.position.set(cow.x, cow.y + 2.5, cow.z); // Lift high
+    giantCow.rotation.y = cow.rotation;
     
     if (cow.lying) {
-      cowMesh.rotation.z = -Math.PI / 3;
+      giantCow.rotation.z = -Math.PI / 4;
     }
     
-    // NO SCALE - use full geometry size (3.5 x 2.5 x 2.0 m - real cow size!)
-    
-    cowMesh.castShadow = true;
-    cowMesh.receiveShadow = true;
-    cowMesh.name = `cow-${i}`;
-    scene.add(cowMesh);
+    giantCow.castShadow = true;
+    giantCow.receiveShadow = true;
+    giantCow.name = `giant-cow-${i}`;
+    scene.add(giantCow);
     addedCount++;
   });
   
-  console.log(`Added ${addedCount} LARGE white cow meshes to scene`);
+  console.log(`Added ${addedCount} GIANT GLOWING WHITE BOXES (cows) to scene`);
   
   // Debug: log cow positions and add test cube at first cow position
   console.log('\n=== Normandy Cows Debug ===');
