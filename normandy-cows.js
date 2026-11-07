@@ -225,7 +225,11 @@ function createFence(x1, z1, x2, z2, heightFn) {
 }
 
 // Add Normandy cows in pasture fields along the route
+// DISABLED: Rendering issue under investigation (v0.5.7)
 export function addNormandyCows(scene, track, terrain) {
+  // Return early - cow rendering not working
+  return { fields: 0, cows: 0 };
+  
   const { pts, cum, length } = track;
   const fields = [];
   const cows = [];

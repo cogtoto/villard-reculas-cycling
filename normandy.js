@@ -197,10 +197,10 @@ export function buildNormandyTerrain(scene, track, dem) {
   
   g2.putImageData(img, 0, 0);
   
-  // Use solid green for lush Normandy grass (texture-based approach had rendering issues)
+  // Vivid green for sunny Normandy grass
   const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
-    color: 0x55aa45, // Lush green grass color
-    roughness: 0.95,
+    color: 0x5ec04a, // Bright vivid green
+    roughness: 0.9,
     metalness: 0
   }));
   land.position.set(c.x, 0, c.z);
@@ -211,32 +211,49 @@ export function buildNormandyTerrain(scene, track, dem) {
   return { land, isLand, classify, distTo, heightAt, slopeAt, orchardMask, hedgeAt, houses: [], center: c, span: Math.max(size.x, size.z) };
 }
 
-// Atmosphère réaliste avec meilleur gradient de ciel et brume atmosphérique
+// Bright sunny Normandy atmosphere with visible sun
 export function normandyAtmosphere(scene, renderer, sun, sunDir) {
-  // Couleurs plus riches pour un ciel d'été réaliste
-  const fogCol = new THREE.Color(0xdae6ed);
-  const skyMid = new THREE.Color(0xb8d4e8);
-  const skyTop = new THREE.Color(0x87b5d8);
-  
-  scene.fog = new THREE.FogExp2(0xdae6ed, 0.0003); // Light fog for atmosphere
-  scene.background = fogCol;
+  // Bright blue sky and vivid colors
+  const skyColor = new THREE.Color(0x5ba3d0); // Bright blue sky
+  scene.background = skyColor;
+  scene.fog = new THREE.FogExp2(0xc8dbe8, 0.00025); // Very light fog
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
-  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 48), THREE.MathUtils.degToRad(175));
-  sun.color.set(0xfffaf0);
-  sun.intensity = 3.2;
-  renderer.toneMappingExposure = 0.85;  // Higher exposure to preserve color saturation
+  // Bright sunny day - sun high and strong
+  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 55), THREE.MathUtils.degToRad(160));
+  sun.color.set(0xfffef5); // Warm bright sunlight
+  sun.intensity = 3.8; // Strong sunlight
+  renderer.toneMappingExposure = 0.95; // Bright but readable
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   
-  // Gradient de ciel plus réaliste avec transition douce
+  // Add visible sun sphere
+  const sunSphereGeo = new THREE.SphereGeometry(80, 32, 32);
+  const sunSphereMat = new THREE.MeshBasicMaterial({
+    color: 0xffffe0,
+    fog: false
+  });
+  const sunSphere = new THREE.Mesh(sunSphereGeo, sunSphereMat);
+  const sunDist = 2000;
+  sunSphere.position.set(
+    sunDir.x * sunDist,
+    sunDir.y * sunDist,
+    sunDir.z * sunDist
+  );
+  scene.add(sunSphere);
+  
+  // Sky dome with gradient (simplified - no fogCol dependency)
+  const horizonColor = new THREE.Color(0xc8dbe8);
+  const skyMidColor = new THREE.Color(0x7db8db);
+  const skyTopColor = new THREE.Color(0x5ba3d0);
+  
   const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 48, 24), new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
     uniforms: {
-      uHorizon: { value: fogCol },
-      uMid: { value: skyMid },
-      uTop: { value: skyTop },
+      uHorizon: { value: horizonColor },
+      uMid: { value: skyMidColor },
+      uTop: { value: skyTopColor },
       uSun: { value: sunDir }
     },
     vertexShader: `

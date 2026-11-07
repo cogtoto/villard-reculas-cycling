@@ -9,6 +9,7 @@ import { createSensors } from './sensors.js';
 import { addRoadside } from './roadside.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
 import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
+import { addNormandyChurches } from './normandy-churches.js';
 import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
 import { buildTcx, saveFile, toLatLon } from './export.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
@@ -46,7 +47,9 @@ const ROUTES = {
       const h = addNormandyHouses(scene, track, terrain);
       console.log('Half-timbered houses:', h.village, 'village ·', h.hamlets, 'hamlets');
       console.log('Vegetation:', addNormandyVegetation(scene, track, terrain), 'instances');
-      console.log('Cows:', addNormandyCows(scene, track, terrain));
+      console.log('Churches:', addNormandyChurches(scene, track, terrain));
+      // Cows disabled (v0.5.7 rendering issue)
+      // console.log('Cows:', addNormandyCows(scene, track, terrain));
     },
     zoneColors: NORMANDY_ZONE_COLORS
   }
