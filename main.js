@@ -8,8 +8,60 @@ import { createRider } from './rider.js';
 import { createSensors } from './sensors.js';
 import { addRoadside } from './roadside.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
+import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
+import { addNormandyChurches } from './normandy-churches.js';
+import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
+import { buildTcx, saveFile, toLatLon } from './export.js';
+import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
+import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
+import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
 
 installHeightFog(); // avant toute compilation de shader
+
+// --- Route configuration ---
+const ROUTES = {
+  villard: {
+    name: 'Villard-Reculas (Oisans)',
+    description: 'descent + climb',
+    gpx: '/villard-reculas.gpx',
+    dem: { meta: '/dem-villard.json', bin: '/dem-villard.bin' },
+    setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
+    setupAtmosphere: (scene, renderer, sun, sunDir) => alpineAtmosphere(scene, renderer, sun, sunDir),
+    setupDecor: (scene, track, terrain) => {
+      addClouds(scene, terrain.center, terrain.span * 3, 3200);
+      const ch = addChalets(scene, track, terrain);
+      console.log('Chalets:', ch.village, 'village ·', ch.hamlets, 'hamlets');
+      console.log('Roadside:', addRoadside(scene, track, terrain));
+      console.log('Trees:', addForest(scene, track, terrain), 'instances');
+    },
+    zoneColors: ZONE_COLORS
+  },
+  normandy: {
+    name: 'Normandy countryside – Grand-Camp (Eure)',
+    description: '~21 km rolling',
+    gpx: '/normandie-grand-camp.gpx',
+    dem: { meta: '/dem-normandy.json', bin: '/dem-normandy.bin' },
+    setupTerrain: (scene, track, dem) => buildNormandyTerrain(scene, track, dem),
+    setupAtmosphere: (scene, renderer, sun, sunDir) => normandyAtmosphere(scene, renderer, sun, sunDir),
+    setupDecor: (scene, track, terrain) => {
+      const h = addNormandyHouses(scene, track, terrain);
+      console.log('Half-timbered houses:', h.village, 'village ·', h.hamlets, 'hamlets');
+      console.log('Vegetation:', addNormandyVegetation(scene, track, terrain), 'instances');
+      console.log('Churches:', addNormandyChurches(scene, track, terrain));
+      // Cows disabled (v0.5.7 rendering issue)
+      // console.log('Cows:', addNormandyCows(scene, track, terrain));
+    },
+    zoneColors: NORMANDY_ZONE_COLORS
+  }
+};
+
+const ROUTE_KEY = 'vv.route';
+let selectedRoute = localStorage.getItem(ROUTE_KEY) || 'villard';
+let selectedMode = 'free'; // 'free', 'ftp-ramp-test', 'sweet-spot', 'explosive-power'
+let currentWorkout = null;
+let workoutStartTime = 0;
+let powerHistory = []; // For FTP test
+let cadenceHistory = []; // For FTP test failure detection
 
 // --- FTP & zones de puissance Coggan (modifier ici) ---
 const FTP_KEY = 'vv.ftp';
@@ -18,14 +70,78 @@ let rideStarted = false;
 {
   const inp = document.getElementById('ftp-input'), intro = document.getElementById('intro');
   inp.value = FTP_W;
-  const showRoute = () => { document.getElementById('ftp-step').style.display = 'none'; document.getElementById('route-step').style.display = ''; };
-  if (localStorage.getItem(FTP_KEY)) showRoute(); // FTP asked on first launch only
+  const showMode = () => { 
+    document.getElementById('ftp-step').style.display = 'none'; 
+    document.getElementById('mode-step').style.display = ''; 
+  };
+  const showRoute = () => { 
+    document.getElementById('mode-step').style.display = 'none'; 
+    document.getElementById('route-step').style.display = ''; 
+  };
+  if (localStorage.getItem(FTP_KEY)) showMode();
   document.getElementById('ftp-ok').onclick = () => {
     const v = Math.round(Number(inp.value));
     if (!(v >= 50 && v <= 600)) { inp.style.outline = '2px solid #e74c3c'; return; }
-    FTP_W = v; localStorage.setItem(FTP_KEY, String(v)); document.getElementById('ftp').textContent = v; showRoute();
+    FTP_W = v; localStorage.setItem(FTP_KEY, String(v)); document.getElementById('ftp').textContent = v; showMode();
   };
-  document.getElementById('ride-go').onclick = () => { intro.remove(); rideStarted = true; };
+  
+  document.getElementById('mode-ok').onclick = () => {
+    selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'free';
+    showRoute();
+  };
+  
+  // Route selection - restore last choice
+  const savedRoute = localStorage.getItem(ROUTE_KEY);
+  if (savedRoute) {
+    const radio = document.querySelector(`input[name="route"][value="${savedRoute}"]`);
+    if (radio) radio.checked = true;
+  } else {
+    // Default to villard if no saved choice
+    const villardRadio = document.querySelector('input[name="route"][value="villard"]');
+    if (villardRadio) villardRadio.checked = true;
+  }
+  
+  // Update selectedRoute when user changes selection
+  document.querySelectorAll('input[name="route"]').forEach(el => {
+    el.addEventListener('change', () => {
+      selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
+    });
+  });
+  
+  document.getElementById('ride-go').onclick = () => {
+    selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
+    selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'free';
+    localStorage.setItem(ROUTE_KEY, selectedRoute);
+    
+    // Initialize workout if needed
+    if (selectedMode !== 'free') {
+      if (selectedMode === 'ftp-ramp-test') {
+        currentWorkout = createFTPRampTest(FTP_W);
+      } else if (selectedMode === 'sweet-spot') {
+        currentWorkout = createSweetSpotWorkout(FTP_W);
+      } else if (selectedMode === 'explosive-power') {
+        currentWorkout = createExplosiveWorkout(FTP_W);
+      }
+      console.log('Workout selected:', currentWorkout.name);
+      
+      // Show workout HUD, hide normal HUD gear display
+      document.getElementById('workout-hud').style.display = 'block';
+      document.getElementById('workout-name').textContent = currentWorkout.name;
+      if (currentWorkout.isTest) {
+        document.getElementById('stop-test-btn').style.display = 'block';
+      }
+      
+      // Hide gear controls during workout (ERG mode)
+      document.getElementById('shift-pad').style.display = 'none';
+      const gearLine = Array.from(document.getElementById('hud').children).find(el => el.textContent.includes('Virtual gear'));
+      if (gearLine) gearLine.style.display = 'none';
+    }
+    
+    intro.remove(); 
+    rideStarted = true;
+    S.t0 = Date.now(); // Start timestamp for TCX export
+    loadRoute(); // Load the selected route
+  };
 }
 const POWER_ZONES = [ // borne haute en %FTP, couleur de fond, couleur du texte
   { z: 'Z1', max: 55, bg: '#9e9e9e', fg: '#111' },      // récupération active
@@ -73,6 +189,8 @@ alpineAtmosphere(scene, renderer, sun, sunDir);
 let seaMat = null;
 let groundAt = null; // hauteur du terrain (anti-caméra dans la pente)
 let updateMinimap = null;
+let minimapCanvas = null; // Reference to minimap canvas for show/hide
+let villageSigns = []; // Village/hamlet road signs
 
 // --- Cycliste : vélo route aéro noir VAN RYSEL + coureur animé (rider.js) ---
 const riderModel = createRider();
@@ -94,8 +212,30 @@ let routeGrade = 0; // pente GPX courante (mise à jour dans tick)
 // Consigne home trainer FTMS = 50 % de la pente GPX + décalage de la vitesse virtuelle (renvoyée à chaque changement)
 const TRAINER_GRADE_SCALE = 0.5;
 const trainerGrade = () => routeGrade * TRAINER_GRADE_SCALE + (gear - GEAR_NEUTRAL) * GRADE_PER_GEAR;
-const pushTrainer = () => { try { sensors.setSimulation(trainerGrade()); } catch { /* capteurs pas encore initialisés */ } };
-const shift = (d) => { if (d && typeof S !== 'undefined') S.shifts++; gear = Math.max(1, Math.min(GEARS, gear + d)); const g = document.getElementById('gear'); if (g) g.textContent = gear; const sg = document.getElementById('shift-gear'); if (sg) sg.textContent = gear; if (d) pushTrainer(); };
+const pushTrainer = () => { 
+  try { 
+    if (!isERGActive()) {
+      sensors.setSimulation(trainerGrade()); 
+    }
+  } catch { /* capteurs pas encore initialisés */ } 
+};
+const shift = (d) => { 
+  if (d && typeof S !== 'undefined') S.shifts++; 
+  gear = Math.max(1, Math.min(GEARS, gear + d)); 
+  const g = document.getElementById('gear'); 
+  if (g) g.textContent = gear; 
+  const sg = document.getElementById('shift-gear'); 
+  if (sg) sg.textContent = gear; 
+  if (d) {
+    if (isERGActive()) {
+      // In ERG mode, +/- adjusts target power by ±5%
+      const delta = d * 5; // 5W per gear shift
+      adjustTargetPower(delta);
+    } else {
+      pushTrainer();
+    }
+  }
+};
 addEventListener('keydown', (e) => { if (e.key === '+' || e.key === 'ArrowUp' && e.shiftKey) shift(1); if (e.key === '-' || e.key === 'ArrowDown' && e.shiftKey) shift(-1); });
 const sensors = createSensors((msg) => {
     state = { ...state, ...msg };
@@ -105,7 +245,10 @@ const sensors = createSensors((msg) => {
       document.getElementById('pctftp').textContent = `(${Math.round(zn.pct)} %)`; }
     hud.cadence.textContent = Math.round(state.cadence);
     hud.source.textContent = state.source || 'ws';
-}, { onLog: (m) => console.log('[ble]', m) });
+}, { 
+    onLog: (m) => console.log('[ble]', m),
+    onShift: (delta) => shift(delta) // Companion app gear shift relay
+});
 shift(0);
 for (const [id, d] of [['shift-up', 1], ['shift-down', -1]]) { // gros boutons tactiles (paysage Android)
   const b = document.getElementById(id);
@@ -114,16 +257,32 @@ for (const [id, d] of [['shift-up', 1], ['shift-down', -1]]) { // gros boutons t
 const bleBtn = document.getElementById('ble-btn');
 if (bleBtn) bleBtn.onclick = async () => {
   bleBtn.disabled = true; bleBtn.textContent = 'Connecting…';
-  try { bleBtn.textContent = '✓ ' + (await sensors.connectBle()); }
+  try { 
+    const deviceName = await sensors.connectBle();
+    bleBtn.textContent = '✓ ' + deviceName;
+    
+    // Initialize ERG mode if in workout mode
+    if (currentWorkout) {
+      // Try to init ERG with the connected device
+      // Note: sensors.js needs to expose the BLE device/deviceId
+      console.log('Workout mode: will start ERG when workout begins');
+    }
+  }
   catch (e) { console.warn('BLE', e); bleBtn.textContent = 'BLE : ' + (e.message || e).toString().slice(0, 40); bleBtn.disabled = false; }
 };
 
 // --- Statistiques de sortie + bouton Stop ---
 const S = { elapsed: 0, moving: 0, dist: 0, maxV: 0, gain: 0, loss: 0, lastY: null, wSum: 0, wMax: 0, w30: [], np4: 0, npN: 0, npAcc: 0, npT: 0,
-  cadSum: 0, cadT: 0, zones: new Array(7).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
+  cadSum: 0, cadT: 0, t0: 0, nextSample: 0, samples: [], zones: new Array(7).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
 function recordStats(dt, here) {
   S.elapsed += dt;
   const v = physV, w = state.watts || 0;
+  // Sample 1 Hz for TCX export
+  if (S.elapsed >= S.nextSample) {
+    S.nextSample = Math.ceil(S.elapsed) + 1;
+    const [lat, lon] = toLatLon(track.origin, here.pos.x, here.pos.z);
+    S.samples.push({ t: S.t0 + S.elapsed * 1000, lat, lon, alt: here.pos.y, dist: S.dist, w, cad: state.cadence || 0, v });
+  }
   if (v > 0.5) S.moving += dt;
   S.dist += v * dt; S.maxV = Math.max(S.maxV, v);
   if (S.lastY != null) { const dy = here.pos.y - S.lastY; if (dy > 0) S.gain += dy; else S.loss -= dy; }
@@ -139,6 +298,7 @@ function recordStats(dt, here) {
 const fmtT = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + 'h ' : '') + String(m).padStart(h ? 2 : 1, '0') + 'm ' + String(x).padStart(2, '0') + 's'; };
 const ZONE_NAMES = ['Easy recovery', 'Endurance', 'Tempo', 'Threshold', 'VO2 max', 'Anaerobic', 'Sprint'];
 function showStats() {
+  document.getElementById('stats-route').textContent = ROUTES[selectedRoute].name + ' · ride paused';
   const kmh = (ms) => (ms * 3.6).toFixed(1);
   const avgV = S.moving ? S.dist / S.moving : 0, avgW = S.elapsed ? S.wSum / S.elapsed : 0;
   const np = S.npN ? Math.pow(S.np4 / S.npN, 0.25) : null;
@@ -160,8 +320,7 @@ function showStats() {
       ${card('Average power', Math.round(avgW) + ' W', Math.round((avgW / FTP_W) * 100) + ' % of your FTP')}
       ${card('Max power', Math.round(S.wMax) + ' W')}
       ${card('Normalized power', np ? Math.round(np) + ' W' : '—', 'how hard it really felt')}
-      ${card('Average cadence', S.cadT ? Math.round(S.cadSum / S.cadT) + ' rpm' : '—', 'pedal turns per minute')}
-      ${card('Virtual gear', S.elapsed ? (S.gearSum / S.elapsed).toFixed(1) : '—', S.elapsed ? `avg · range ${S.gearMin}–${S.gearMax} · ${S.shifts} shifts` : '')}</div>
+      ${card('Average cadence', S.cadT ? Math.round(S.cadSum / S.cadT) + ' rpm' : '—', 'pedal turns per minute')}</div>
     <div class="st-sec">Time in each power zone <span style="opacity:.6;font-weight:400">(your FTP: ${FTP_W} W)</span></div>${zones}`;
   document.getElementById('stats').style.display = 'flex';
 }
@@ -173,6 +332,21 @@ function showStats() {
   $('stop-yes').onclick = () => { confirmBox.style.display = 'none'; showStats(); };
   $('stats-resume').onclick = () => { $('stats').style.display = 'none'; rideStarted = true; };
   $('stats-end').onclick = () => location.reload(); // retour à l'écran d'accueil, nouvelle sortie
+  $('stats-garmin').onclick = async () => {
+    const btn = $('stats-garmin'), msg = $('stats-garmin-msg');
+    if (S.samples.length < 2) { msg.textContent = 'Ride a little longer first — not enough data yet.'; return; }
+    btn.disabled = true; btn.textContent = 'Exporting…';
+    const routeName = ROUTES[selectedRoute].name;
+    const name = routeName.replace(/[^a-z0-9]+/gi, '_') + '_' + new Date(S.t0).toISOString().slice(0, 10) + '.tcx';
+    try {
+      const how = await saveFile(name, buildTcx(S.samples, { name: routeName + ' (virtual ride)' }));
+      msg.textContent = how === 'shared' ? '✓ Shared to Garmin Connect / Drive / Email' : '✓ Downloaded — import into Garmin Connect';
+      btn.textContent = '✓ Exported'; btn.disabled = false;
+    } catch (e) {
+      msg.textContent = 'Export failed: ' + e.message;
+      btn.textContent = '⬇ Download for Garmin'; btn.disabled = false;
+    }
+  };
 }
 
 addEventListener('resize', () => {
@@ -186,6 +360,103 @@ const tmp = new THREE.Vector3();
 function tick() {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (track) {
+    // Workout logic
+    if (currentWorkout && workoutStartTime > 0) {
+      const elapsed = (performance.now() - workoutStartTime) / 1000;
+      const current = getCurrentInterval(currentWorkout, elapsed);
+      
+      if (!current) {
+        // Workout complete!
+        console.log('Workout complete!');
+        stopERGMode();
+        currentWorkout = null;
+        document.getElementById('workout-hud').style.display = 'none';
+        // TODO: Show summary with FTP estimate if test
+      } else {
+        // Update workout HUD
+        document.getElementById('interval-name').textContent = current.interval.name;
+        document.getElementById('target-watts').textContent = current.currentTarget;
+        document.getElementById('actual-watts').textContent = Math.round(state.watts);
+        document.getElementById('interval-time').textContent = formatTime(current.intervalRemaining);
+        document.getElementById('total-time').textContent = formatTime(current.totalRemaining);
+        document.getElementById('next-interval').textContent = current.nextInterval ? current.nextInterval.name : 'Finish';
+        
+        // Update target power in ERG mode
+        if (isERGActive()) {
+          updateTargetPower(current.currentTarget);
+        }
+        
+        // Record power/cadence history for FTP test
+        powerHistory.push(state.watts || 0);
+        cadenceHistory.push(state.cadence || 0);
+        
+        // Keep only last 60 samples (for failure detection)
+        if (powerHistory.length > 60) powerHistory.shift();
+        if (cadenceHistory.length > 60) cadenceHistory.shift();
+        
+        // Coaching messages
+        const elapsedInInterval = current.interval.duration - current.intervalRemaining;
+        const nextIntervalIn = current.intervalRemaining; // Time until next interval
+        const timing = shouldShowMessage(performance.now(), current.index, nextIntervalIn);
+        
+        if (timing.show) {
+          let message = null;
+          
+          // Priority 1: Countdown messages (before sprints)
+          if (timing.reason === 'countdown') {
+            const messages = getCoachingMessage(currentWorkout, current, state.watts, elapsedInInterval, nextIntervalIn);
+            message = messages.countdown;
+          }
+          // Priority 2: Interval start messages
+          else if (timing.reason === 'intervalStart') {
+            const messages = getCoachingMessage(currentWorkout, current, state.watts, elapsedInInterval, nextIntervalIn);
+            message = messages.intervalStart;
+          }
+          // Priority 3: Regular coaching (performance, motivation, technique)
+          else if (timing.reason === 'regular') {
+            const messages = getCoachingMessage(currentWorkout, current, state.watts, elapsedInInterval, nextIntervalIn);
+            
+            // For ramp test, use special messages
+            if (currentWorkout.isTest && current.interval.type === 'ramp') {
+              message = getRampTestMessage(elapsed, powerHistory);
+            } else {
+              // Rotate through different message types
+              const types = ['performance', 'motivation', 'technique'];
+              const random = Math.random();
+              if (random < 0.5 && messages.performance) {
+                message = messages.performance;
+              } else if (random < 0.8 && messages.motivation) {
+                message = messages.motivation;
+              } else if (messages.technique) {
+                message = messages.technique;
+              }
+            }
+          }
+          
+          if (message && !timing.noTimerUpdate) {
+            showCoachingMessage(message);
+          } else if (message && timing.noTimerUpdate) {
+            // Countdown messages - show but don't reset timer
+            showCoachingMessage(message, true);
+          }
+        }
+        
+        // Check for FTP test failure
+        if (currentWorkout.isTest) {
+          const failure = detectRampTestFailure(currentWorkout, powerHistory, cadenceHistory, elapsed);
+          if (failure.failed) {
+            console.log('FTP test failed:', failure.reason);
+            const estimatedFTP = calculateEstimatedFTP(powerHistory);
+            const peak1MinPower = Math.round(Math.max(...powerHistory.slice(-60)));
+            showFTPResults(estimatedFTP, peak1MinPower, failure.reason);
+          }
+        }
+        
+        // Draw workout profile
+        drawWorkoutProfile(elapsed);
+      }
+    }
+    
     // Physique : P = air + roulement + gravité, sur la pente réelle du GPX (inertie incluse)
     const here = sampleTrack(track, distanceM);
     physV = stepSpeed(physV, state.watts, here.gradePct, dt, here.pos.y);
@@ -202,6 +473,15 @@ function tick() {
     rider.position.set(pos.x, roadY + 0.42, pos.z);
     riderModel.update(dt, state.cadence, physV);
     if (updateMinimap) updateMinimap(pos, dir);
+    
+    // Check for village signs
+    if (villageSigns.length > 0) {
+      const signCheck = checkSignProximity(pos, villageSigns, distanceM);
+      if (signCheck.shouldShow) {
+        showCoachingMessage(signCheck.message, false);
+      }
+    }
+    
     rider.rotation.y = Math.atan2(dir.x, dir.z); // tangent à la route
     // Pente calculée depuis le GPX (prioritaire sur le mock serveur)
     hud.grade.textContent = gradePct.toFixed(1);
@@ -256,27 +536,222 @@ function teleportTo(wx, wz) {
 // Debug console : veloTeleportKm(12.5)
 window.veloTeleportKm = (km) => { if (!track) return; const sm = sampleTrack(track, km * 1000); teleportTo(sm.pos.x, sm.pos.z); };
 
-// --- Chargement GPX ---
-Promise.all([
-  fetch('/villard-reculas.gpx').then((r) => { if (!r.ok) throw new Error(`GPX HTTP ${r.status}`); return r.text(); }),
-  fetch('/dem-villard.json').then((r) => r.json()),
-  fetch('/dem-villard.bin').then((r) => r.arrayBuffer()),
-])
-  .then(([txt, demMeta, demBuf]) => {
-    const dem = { meta: demMeta, data: new Int16Array(demBuf) };
-    track = buildTrack(parseGpx(txt), 1200);
-    console.log(`GPX : ${track.rawCount} pts bruts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
-    const terrain = buildAlpineTerrain(scene, track, dem);
-    buildRoad(scene, track, 4, terrain);
-    groundAt = terrain.heightAt;
-    updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, ZONE_COLORS);
-    addClouds(scene, terrain.center, terrain.span * 3, 3200);
-    { const ch = addChalets(scene, track, terrain); console.log('Chalets bois — village :', ch.village, '· hameaux :', ch.hamlets); }
-    console.log('Bords de route :', addRoadside(scene, track, terrain));
-    console.log('Arbres :', addForest(scene, track, terrain), 'instances');
-    const s = sampleTrack(track, 0);
-    camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
-  })
-  .catch((e) => { console.error('GPX', e); hud.source.textContent = 'GPX not found'; });
+// --- Chargement GPX (appelé après sélection de route) ---
+function loadRoute() {
+  const route = ROUTES[selectedRoute];
+  Promise.all([
+    fetch(route.gpx).then((r) => { if (!r.ok) throw new Error(`GPX HTTP ${r.status}`); return r.text(); }),
+    fetch(route.dem.meta).then((r) => r.json()),
+    fetch(route.dem.bin).then((r) => r.arrayBuffer()),
+  ])
+    .then(([txt, demMeta, demBuf]) => {
+      const dem = { meta: demMeta, data: new Int16Array(demBuf) };
+      track = buildTrack(parseGpx(txt), 1200);
+      console.log(`GPX ${selectedRoute}: ${track.rawCount} raw pts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
+      const terrain = route.setupTerrain(scene, track, dem);
+      buildRoad(scene, track, 4, terrain);
+      groundAt = terrain.heightAt;
+      route.setupAtmosphere(scene, renderer, sun, sunDir);
+      updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
+      minimapCanvas = updateMinimap.canvas; // Store reference for show/hide
+      
+      // Hide minimap in workout modes (to avoid overlap with power indicators)
+      if (selectedMode !== 'free') {
+        minimapCanvas.style.display = 'none';
+        console.log('Minimap hidden: workout mode active');
+      }
+      
+      route.setupDecor(scene, track, terrain);
+      
+      // Load and place village signs
+      const villageFile = selectedRoute === 'normandy' ? '/normandy-villages.json' : '/villard-villages.json';
+      console.log(`Loading village data from: ${villageFile}`);
+      fetch(villageFile)
+        .then(res => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res.json();
+        })
+        .then(villagesData => {
+          console.log(`Village data loaded: ${villagesData.length} entries`);
+          villageSigns = placeVillageSigns(scene, track, villagesData, terrain.heightAt);
+          console.log(`Placed ${villageSigns.length} village signs`);
+          resetSignAnnouncements(villageSigns);
+        })
+        .catch(err => console.error('Village signs not loaded:', err));
+      
+      const s = sampleTrack(track, 0);
+      camPos.set(s.pos.x - s.dir.x * 9, s.pos.y + 4, s.pos.z - s.dir.z * 9);
+      
+      // Start workout if selected
+      if (currentWorkout) {
+        console.log('Starting workout:', currentWorkout.name);
+        workoutStartTime = performance.now();
+        resetCoachingTimer(); // Initialize coaching message timing
+        startERGMode().then(success => {
+          if (success) {
+            console.log('ERG mode activated');
+          } else {
+            console.warn('ERG mode failed to start');
+          }
+        });
+        drawWorkoutProfileStatic();
+      }
+    })
+    .catch((e) => { console.error('GPX', e); hud.source.textContent = 'GPX not found'; });
+}
+
+// Draw workout profile bar chart (static background)
+function drawWorkoutProfileStatic() {
+  if (!currentWorkout) return;
+  
+  const canvas = document.getElementById('workout-profile');
+  if (!canvas) return;
+  
+  const ctx = canvas.getContext('2d');
+  const profile = getWorkoutProfile(currentWorkout, FTP_W);
+  
+  const width = canvas.width;
+  const height = canvas.height;
+  ctx.clearRect(0, 0, width, height);
+  
+  const totalDuration = currentWorkout.totalDuration;
+  let x = 0;
+  
+  profile.forEach(interval => {
+    const w = (interval.duration / totalDuration) * width;
+    ctx.fillStyle = interval.color;
+    ctx.fillRect(x, 0, w, height);
+    x += w;
+  });
+}
+
+// Draw progress marker on workout profile
+function drawWorkoutProfile(elapsed) {
+  if (!currentWorkout) return;
+  
+  const canvas = document.getElementById('workout-profile');
+  if (!canvas) return;
+  
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  
+  // Redraw static profile
+  drawWorkoutProfileStatic();
+  
+  // Draw progress line
+  const progress = elapsed / currentWorkout.totalDuration;
+  const x = progress * width;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, height);
+  ctx.stroke();
+}
+
+// Show coaching message with auto-fade
+let coachingTimeout = null;
+function showCoachingMessage(message, isCountdown = false) {
+  const banner = document.getElementById('coaching-message');
+  if (!banner) return;
+  
+  // Clear any existing timeout
+  if (coachingTimeout) {
+    clearTimeout(coachingTimeout);
+    coachingTimeout = null;
+  }
+  
+  // Remove fade classes
+  banner.classList.remove('fade-out', 'fade-in');
+  
+  // Set message and show
+  banner.textContent = message;
+  banner.style.visibility = 'visible';
+  banner.style.opacity = '1';
+  
+  // Trigger fade-in animation
+  setTimeout(() => {
+    banner.classList.add('fade-in');
+  }, 10);
+  
+  // Auto-fade after delay (shorter for countdown messages)
+  const duration = isCountdown ? 2000 : 4000;
+  coachingTimeout = setTimeout(() => {
+    banner.classList.remove('fade-in');
+    banner.classList.add('fade-out');
+    setTimeout(() => {
+      banner.style.visibility = 'hidden';
+      banner.style.opacity = '0';
+      banner.classList.remove('fade-out');
+    }, 500); // Match animation duration
+  }, duration);
+}
+
+// Show FTP test results screen
+function showFTPResults(estimatedFTP, peak1MinPower, reason = 'Test complete') {
+  const oldFTP = FTP_W;
+  const diff = estimatedFTP - oldFTP;
+  const diffSign = diff > 0 ? '+' : '';
+  
+  // Update modal values
+  document.getElementById('ftp-new-value').textContent = `${estimatedFTP}W`;
+  document.getElementById('ftp-old-value').textContent = `${oldFTP}W`;
+  document.getElementById('ftp-diff-value').textContent = `${diffSign}${diff}W`;
+  document.getElementById('ftp-diff-value').style.color = diff > 0 ? '#27ae60' : diff < 0 ? '#e74c3c' : '#95a5a6';
+  document.getElementById('ftp-peak-value').textContent = `${peak1MinPower}W`;
+  
+  // Show coaching message
+  let message = `Test complete! Estimated FTP: ${estimatedFTP}W`;
+  if (diff > 0) {
+    message = `🎉 Great job! New FTP: ${estimatedFTP}W (+${diff}W improvement!)`;
+  } else if (diff < 0) {
+    message = `FTP estimated at ${estimatedFTP}W (${diff}W from previous)`;
+  }
+  showCoachingMessage(message, false);
+  
+  // Show modal
+  document.getElementById('ftp-results-modal').style.display = 'flex';
+  
+  // Stop ERG and hide workout HUD
+  stopERGMode();
+  document.getElementById('workout-hud').style.display = 'none';
+}
+
+// FTP Results modal button handlers
+const ftpSaveBtn = document.getElementById('ftp-save-btn');
+const ftpKeepBtn = document.getElementById('ftp-keep-btn');
+
+if (ftpSaveBtn) {
+  ftpSaveBtn.onclick = () => {
+    const newFTP = parseInt(document.getElementById('ftp-new-value').textContent);
+    FTP_W = newFTP;
+    localStorage.setItem(FTP_KEY, String(FTP_W));
+    document.getElementById('ftp').textContent = FTP_W;
+    document.getElementById('ftp-results-modal').style.display = 'none';
+    showCoachingMessage(`✓ FTP saved: ${FTP_W}W`, false);
+    currentWorkout = null;
+  };
+}
+
+if (ftpKeepBtn) {
+  ftpKeepBtn.onclick = () => {
+    document.getElementById('ftp-results-modal').style.display = 'none';
+    showCoachingMessage('FTP unchanged - keeping current value', false);
+    currentWorkout = null;
+  };
+}
+
+// Stop test button handler
+const stopTestBtn = document.getElementById('stop-test-btn');
+if (stopTestBtn) {
+  stopTestBtn.onclick = () => {
+    if (currentWorkout && currentWorkout.isTest) {
+      const estimatedFTP = calculateEstimatedFTP(powerHistory);
+      const peak1MinPower = Math.round(Math.max(...powerHistory.slice(-60)));
+      showFTPResults(estimatedFTP, peak1MinPower, 'Test stopped early');
+    }
+  };
+}
 
 tick();
