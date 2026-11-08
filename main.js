@@ -681,6 +681,10 @@ function drawWorkoutProfileStatic() {
   if (legendDiv) {
     const items = [];
     const seen = new Map(); // Track type+target combinations to avoid duplicates
+    let rampSummaryAdded = false;
+    
+    // Collect all ramp stages first if this is a ramp test
+    const rampIntervals = currentWorkout.intervals.filter(i => i.type === 'ramp');
     
     // Show each distinct interval type with its target
     currentWorkout.intervals.forEach((interval, idx) => {
@@ -698,10 +702,25 @@ function drawWorkoutProfileStatic() {
       } else if (interval.target !== undefined) {
         // Fixed target
         const pct = Math.round((interval.target / FTP_W) * 100);
-        label = `${pct}% (${Math.round(interval.target)}W)`;
+        const watts = Math.round(interval.target);
+        label = `${pct}% (${watts}W)`;
         key = `${interval.type}-${interval.target}`;
       } else {
         return;
+      }
+      
+      // For ramp stages, show compact summary once instead of listing all
+      if (interval.type === 'ramp') {
+        if (!rampSummaryAdded && rampIntervals.length > 0) {
+          const firstRamp = rampIntervals[0];
+          const lastRamp = rampIntervals[rampIntervals.length - 1];
+          const firstPct = Math.round((firstRamp.target / FTP_W) * 100);
+          const lastPct = Math.round((lastRamp.target / FTP_W) * 100);
+          const summary = `<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${prof.color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">Ramp:</span> ${firstPct}%→${lastPct}% (${Math.round(firstRamp.target)}W→${Math.round(lastRamp.target)}W, +20W/min)</span>`;
+          items.push(summary);
+          rampSummaryAdded = true;
+        }
+        return; // Skip individual ramp stages
       }
       
       // Skip if we've already shown this type+target combination
@@ -711,8 +730,7 @@ function drawWorkoutProfileStatic() {
       const type = interval.type === 'warmup' ? 'Warm' : 
                    interval.type === 'cooldown' ? 'Cool' :
                    interval.type === 'recovery' ? 'Rec' :
-                   interval.type === 'work' ? 'Work' :
-                   interval.type === 'ramp' ? 'Ramp' : interval.type;
+                   interval.type === 'work' ? 'Work' : interval.type;
       
       items.push(`<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${prof.color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">${type}:</span> ${label}</span>`);
     });
