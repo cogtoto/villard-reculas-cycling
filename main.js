@@ -67,6 +67,7 @@ let cadenceHistory = []; // For FTP test failure detection
 const FTP_KEY = 'vv.ftp';
 let FTP_W = Number(localStorage.getItem(FTP_KEY)) || 160; // saved locally, default 160 W
 let rideStarted = false;
+let rideStartTime = 0; // Wall clock time when ride actually started
 {
   const inp = document.getElementById('ftp-input'), intro = document.getElementById('intro');
   inp.value = FTP_W;
@@ -139,6 +140,7 @@ let rideStarted = false;
     
     intro.remove(); 
     rideStarted = true;
+    rideStartTime = 0; // Will be set when scene is ready and first frame with track renders
     S.t0 = Date.now(); // Start timestamp for TCX export
     loadRoute(); // Load the selected route
   };
@@ -339,10 +341,34 @@ function showStats() {
 {
   const $ = (id) => document.getElementById(id), confirmBox = $('stop-confirm');
   let wasRiding = false;
-  $('stop-btn').onclick = () => { if (!rideStarted) return; wasRiding = true; rideStarted = false; confirmBox.style.display = 'flex'; };
-  $('stop-no').onclick = () => { confirmBox.style.display = 'none'; rideStarted = wasRiding; };
-  $('stop-yes').onclick = () => { confirmBox.style.display = 'none'; showStats(); };
-  $('stats-resume').onclick = () => { $('stats').style.display = 'none'; rideStarted = true; };
+  let pauseTime = 0;
+  let pausedElapsed = 0;
+  $('stop-btn').onclick = () => {
+    if (!rideStarted) return;
+    wasRiding = true;
+    rideStarted = false;
+    pauseTime = performance.now();
+    pausedElapsed = (pauseTime - rideStartTime) / 1000;
+    confirmBox.style.display = 'flex';
+  };
+  $('stop-no').onclick = () => {
+    confirmBox.style.display = 'none';
+    rideStarted = wasRiding;
+    if (rideStarted) {
+      // Adjust start time to account for pause duration
+      rideStartTime = performance.now() - (pausedElapsed * 1000);
+    }
+  };
+  $('stop-yes').onclick = () => {
+    confirmBox.style.display = 'none';
+    showStats();
+  };
+  $('stats-resume').onclick = () => {
+    $('stats').style.display = 'none';
+    rideStarted = true;
+    // Adjust start time to account for pause duration
+    rideStartTime = performance.now() - (pausedElapsed * 1000);
+  };
   $('stats-end').onclick = () => location.reload(); // retour à l'écran d'accueil, nouvelle sortie
   $('stats-garmin').onclick = async () => {
     const btn = $('stats-garmin'), msg = $('stats-garmin-msg');
@@ -473,8 +499,21 @@ function tick() {
     const here = sampleTrack(track, distanceM);
     physV = stepSpeed(physV, state.watts, here.gradePct, dt, here.pos.y);
     hud.speed.textContent = (physV * 3.6).toFixed(1);
-    if (rideStarted) { distanceM += physV * dt; recordStats(dt, here); }
-    hud.rideTime.textContent = formatRideTime(S.elapsed);
+    if (rideStarted) {
+      // Initialize ride start time on first frame after scene loads
+      if (rideStartTime === 0) {
+        rideStartTime = performance.now();
+      }
+      distanceM += physV * dt;
+      recordStats(dt, here);
+    }
+    // Update timer display using wall clock time for accuracy
+    if (rideStartTime > 0) {
+      const elapsedWallClock = (performance.now() - rideStartTime) / 1000;
+      hud.rideTime.textContent = formatRideTime(elapsedWallClock);
+    } else {
+      hud.rideTime.textContent = '00:00';
+    }
     const now = performance.now();
     if (now - lastSent > 1000) { sensors.sendRoute(here.gradePct, here.pos.y); routeGrade = here.gradePct; pushTrainer(); lastSent = now; }
     if (distanceM >= track.length) distanceM = 0; // boucle : retour au départ (Villard-Reculas)
@@ -641,37 +680,33 @@ function drawWorkoutProfileStatic() {
   const legendDiv = document.getElementById('workout-legend');
   if (legendDiv) {
     const items = [];
+    const seen = new Map(); // Track type+target combinations to avoid duplicates
     
-    // Group by color and show representative targets
-    const colorGroups = new Map();
+    // Show each distinct interval type with its target
     currentWorkout.intervals.forEach((interval, idx) => {
       const prof = profile[idx];
       if (!prof) return;
       
-      const colorKey = prof.color;
-      if (!colorGroups.has(colorKey)) {
-        colorGroups.set(colorKey, []);
-      }
-      colorGroups.get(colorKey).push({ interval, prof });
-    });
-    
-    // Build legend items from color groups
-    colorGroups.forEach((group, color) => {
-      const interval = group[0].interval;
-      let label;
+      let label, key;
       
       if (interval.targetStart !== undefined && interval.targetEnd !== undefined) {
         // Progressive (warmup/cooldown)
         const startPct = Math.round((interval.targetStart / FTP_W) * 100);
         const endPct = Math.round((interval.targetEnd / FTP_W) * 100);
         label = `${startPct}–${endPct}% (${Math.round(interval.targetStart)}–${Math.round(interval.targetEnd)}W)`;
+        key = `${interval.type}-${interval.targetStart}-${interval.targetEnd}`;
       } else if (interval.target !== undefined) {
         // Fixed target
         const pct = Math.round((interval.target / FTP_W) * 100);
         label = `${pct}% (${Math.round(interval.target)}W)`;
+        key = `${interval.type}-${interval.target}`;
       } else {
         return;
       }
+      
+      // Skip if we've already shown this type+target combination
+      if (seen.has(key)) return;
+      seen.set(key, true);
       
       const type = interval.type === 'warmup' ? 'Warm' : 
                    interval.type === 'cooldown' ? 'Cool' :
@@ -679,7 +714,7 @@ function drawWorkoutProfileStatic() {
                    interval.type === 'work' ? 'Work' :
                    interval.type === 'ramp' ? 'Ramp' : interval.type;
       
-      items.push(`<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">${type}:</span> ${label}</span>`);
+      items.push(`<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${prof.color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">${type}:</span> ${label}</span>`);
     });
     
     legendDiv.innerHTML = items.join(' · ');
