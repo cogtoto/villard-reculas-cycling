@@ -10,17 +10,17 @@
  * - ramp: FTP test ramp (increases every minute)
  */
 
-// FTP Ramp Test: ~5 min warmup, ramp +20W/min starting ~50% FTP until failure
+// FTP Ramp Test: 3 min warmup 60-100W, ramp +20W/min starting ~50% FTP until failure
 export function createFTPRampTest(userFTP) {
   const startWatts = Math.max(100, Math.round(userFTP * 0.5));
   const intervals = [];
   
-  // Warmup: 5 minutes gradual
+  // Warmup: 3 minutes gradual 60W to 100W
   intervals.push({
     type: 'warmup',
-    duration: 300, // 5 min
-    targetStart: startWatts * 0.5,
-    targetEnd: startWatts,
+    duration: 180, // 3 min
+    targetStart: 60,
+    targetEnd: 100,
     name: 'Warm-up'
   });
   
@@ -53,12 +53,12 @@ export function createSweetSpotWorkout(userFTP) {
   const sweetSpotHigh = Math.round(userFTP * 0.93);
   const recovery = Math.round(userFTP * 0.55);
   
-  // Warmup: 8 minutes
+  // Warmup: 3 minutes 60W to 100W
   intervals.push({
     type: 'warmup',
-    duration: 480,
-    targetStart: recovery * 0.7,
-    targetEnd: recovery,
+    duration: 180,
+    targetStart: 60,
+    targetEnd: 100,
     name: 'Warm-up'
   });
   
@@ -109,12 +109,12 @@ export function createExplosiveWorkout(userFTP) {
   const activeRecovery = Math.round(userFTP * 0.55);
   const vo2Power = Math.round(userFTP * 1.2);
   
-  // Warmup: 8 minutes
+  // Warmup: 3 minutes 60W to 100W
   intervals.push({
     type: 'warmup',
-    duration: 480,
-    targetStart: activeRecovery * 0.7,
-    targetEnd: activeRecovery,
+    duration: 180,
+    targetStart: 60,
+    targetEnd: 100,
     name: 'Warm-up'
   });
   

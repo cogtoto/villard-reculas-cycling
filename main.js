@@ -162,7 +162,19 @@ const hud = {
   source: document.getElementById('source'),
   dist: document.getElementById('dist'),
   alt: document.getElementById('alt'),
+  rideTime: document.getElementById('ride-time'),
 };
+
+function formatRideTime(seconds) {
+  const s = Math.floor(seconds);
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  if (hrs > 0) {
+    return `${hrs}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
 
 // --- Scène ---
 const SKY = 0xa8d0f0;
@@ -462,6 +474,7 @@ function tick() {
     physV = stepSpeed(physV, state.watts, here.gradePct, dt, here.pos.y);
     hud.speed.textContent = (physV * 3.6).toFixed(1);
     if (rideStarted) { distanceM += physV * dt; recordStats(dt, here); }
+    hud.rideTime.textContent = formatRideTime(S.elapsed);
     const now = performance.now();
     if (now - lastSent > 1000) { sensors.sendRoute(here.gradePct, here.pos.y); routeGrade = here.gradePct; pushTrainer(); lastSent = now; }
     if (distanceM >= track.length) distanceM = 0; // boucle : retour au départ (Villard-Reculas)
@@ -623,6 +636,54 @@ function drawWorkoutProfileStatic() {
     ctx.fillRect(x, 0, w, height);
     x += w;
   });
+  
+  // Build compact legend showing each segment's power target
+  const legendDiv = document.getElementById('workout-legend');
+  if (legendDiv) {
+    const items = [];
+    
+    // Group by color and show representative targets
+    const colorGroups = new Map();
+    currentWorkout.intervals.forEach((interval, idx) => {
+      const prof = profile[idx];
+      if (!prof) return;
+      
+      const colorKey = prof.color;
+      if (!colorGroups.has(colorKey)) {
+        colorGroups.set(colorKey, []);
+      }
+      colorGroups.get(colorKey).push({ interval, prof });
+    });
+    
+    // Build legend items from color groups
+    colorGroups.forEach((group, color) => {
+      const interval = group[0].interval;
+      let label;
+      
+      if (interval.targetStart !== undefined && interval.targetEnd !== undefined) {
+        // Progressive (warmup/cooldown)
+        const startPct = Math.round((interval.targetStart / FTP_W) * 100);
+        const endPct = Math.round((interval.targetEnd / FTP_W) * 100);
+        label = `${startPct}–${endPct}% (${Math.round(interval.targetStart)}–${Math.round(interval.targetEnd)}W)`;
+      } else if (interval.target !== undefined) {
+        // Fixed target
+        const pct = Math.round((interval.target / FTP_W) * 100);
+        label = `${pct}% (${Math.round(interval.target)}W)`;
+      } else {
+        return;
+      }
+      
+      const type = interval.type === 'warmup' ? 'Warm' : 
+                   interval.type === 'cooldown' ? 'Cool' :
+                   interval.type === 'recovery' ? 'Rec' :
+                   interval.type === 'work' ? 'Work' :
+                   interval.type === 'ramp' ? 'Ramp' : interval.type;
+      
+      items.push(`<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">${type}:</span> ${label}</span>`);
+    });
+    
+    legendDiv.innerHTML = items.join(' · ');
+  }
 }
 
 // Draw progress marker on workout profile
