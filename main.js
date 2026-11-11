@@ -379,8 +379,14 @@ function showStats() {
     const routeName = ROUTES[selectedRoute].name;
     const name = routeName.replace(/[^a-z0-9]+/gi, '_') + '_' + new Date(S.t0).toISOString().slice(0, 10) + '.tcx';
     try {
-      const how = await saveFile(name, buildTcx(S.samples, { name: routeName + ' (virtual ride)' }));
-      msg.textContent = how === 'shared' ? '✓ Shared to Garmin Connect / Drive / Email' : '✓ Downloaded — import into Garmin Connect';
+      // Get current version from package.json or default
+      const appVersion = '0.5.13';
+      const how = await saveFile(name, buildTcx(S.samples, { name: routeName, version: appVersion }));
+      if (how.startsWith('Saved to')) {
+        msg.textContent = `✓ ${how} — also shared`;
+      } else {
+        msg.textContent = how === 'shared' ? '✓ Shared to Garmin Connect / Drive / Email' : '✓ Downloaded — import into Garmin Connect';
+      }
       btn.textContent = '✓ Exported'; btn.disabled = false;
     } catch (e) {
       msg.textContent = 'Export failed: ' + e.message;
