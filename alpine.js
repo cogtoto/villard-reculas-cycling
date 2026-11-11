@@ -237,7 +237,7 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   // Light fog matched to horizon blue
   const base = opts.fogBase ?? 800, top = opts.fogTop ?? 1400;
   scene.fog = new THREE.Fog(horizonBlue, base, top);
-  scene.background = horizonBlue;
+  scene.background = null; // Let sky dome show (not solid color)
   
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
@@ -318,6 +318,87 @@ function conifer() {
   return g;
 }
 
+// Realistic leafy tree with clustered canopy (Zwift-style)
+function createLeafyTree() {
+  const positions = [], indices = [], colors = [];
+  let vertexOffset = 0;
+  
+  // Visible trunk (brown)
+  const trunkH = 3.5, trunkR = 0.22;
+  const trunkSegs = 6;
+  const trunkColor = new THREE.Color(0x5a4032);
+  for (let i = 0; i <= trunkSegs; i++) {
+    const angle = (i / trunkSegs) * Math.PI * 2;
+    const x = Math.cos(angle) * trunkR, z = Math.sin(angle) * trunkR;
+    positions.push(x, 0, z, x, trunkH, z);
+    colors.push(trunkColor.r * 0.7, trunkColor.g * 0.7, trunkColor.b * 0.7, trunkColor.r, trunkColor.g, trunkColor.b);
+    if (i < trunkSegs) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  vertexOffset = positions.length / 3;
+  
+  // Clustered canopy spheres (5-7 spheres with noise displacement)
+  const numSpheres = 5 + Math.floor(rand() * 3);
+  const baseGreen = new THREE.Color(0x6a9048);
+  const lightGreen = new THREE.Color(0x7fab58);
+  
+  for (let s = 0; s < numSpheres; s++) {
+    const sphereR = 1.4 + rand() * 0.8;
+    const offsetX = (rand() - 0.5) * 2.2;
+    const offsetY = 3.0 + rand() * 1.8;
+    const offsetZ = (rand() - 0.5) * 2.2;
+    
+    const segments = 8;
+    const color = new THREE.Color().copy(baseGreen).lerp(lightGreen, rand());
+    
+    // Create sphere with noise displacement
+    for (let lat = 0; lat <= segments; lat++) {
+      const theta = (lat / segments) * Math.PI;
+      const sinTheta = Math.sin(theta);
+      const cosTheta = Math.cos(theta);
+      
+      for (let lon = 0; lon <= segments; lon++) {
+        const phi = (lon / segments) * Math.PI * 2;
+        const sinPhi = Math.sin(phi);
+        const cosPhi = Math.cos(phi);
+        
+        // Noise displacement for organic look
+        const noise = (rand() - 0.5) * 0.15;
+        const r = sphereR * (1 + noise);
+        
+        const x = r * sinTheta * cosPhi + offsetX;
+        const y = r * cosTheta + offsetY;
+        const z = r * sinTheta * sinPhi + offsetZ;
+        
+        positions.push(x, y, z);
+        const lightVar = 0.85 + rand() * 0.3;
+        colors.push(color.r * lightVar, color.g * lightVar, color.b * lightVar);
+      }
+    }
+    
+    // Create sphere indices
+    const baseVertex = vertexOffset;
+    for (let lat = 0; lat < segments; lat++) {
+      for (let lon = 0; lon < segments; lon++) {
+        const current = baseVertex + lat * (segments + 1) + lon;
+        const next = current + segments + 1;
+        indices.push(current, next, current + 1);
+        indices.push(current + 1, next, next + 1);
+      }
+    }
+    vertexOffset += (segments + 1) * (segments + 1);
+  }
+  
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+
 // Forêts : sapins (cônes) + feuillus en bas, instanciés, dans un couloir de 1,5 km autour du tracé
 export function addForest(scene, track, terrain, max = 14000) {
   const firs = [], leafy = [];
@@ -340,10 +421,10 @@ export function addForest(scene, track, terrain, max = 14000) {
     list.forEach((it, i) => { q.setFromAxisAngle(up, it.r); sc.setScalar(it.s); v.set(it.x, it.y + yOff * it.s, it.z); im.setMatrixAt(i, m.compose(v, q, sc)); });
     im.castShadow = shadow; scene.add(im);
   };
-  const trunk = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 1 });
   const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
-  // sapins : un seul InstancedMesh (+ couleur par instance, échelle variée façon exemple)
+  const leafyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, flatShading: false });
+  
+  // Sapins (conifers)
   const fim = new THREE.InstancedMesh(conifer(), firMat, firs.length), cc = new THREE.Color();
   firs.forEach((it, i) => {
     q.setFromAxisAngle(up, it.r); const k = it.s; sc.set(k * (0.85 + rand() * 0.3), k * (0.8 + rand() * 0.5), k * (0.85 + rand() * 0.3));
@@ -353,10 +434,20 @@ export function addForest(scene, track, terrain, max = 14000) {
   fim.castShadow = true;
   fim.receiveShadow = true;
   scene.add(fim);
-  inst(new THREE.CylinderGeometry(0.2, 0.3, 3, 5), trunk, leafy, 1.5, false);
-  inst(new THREE.IcosahedronGeometry(2.4, 0), leafMat, leafy, 4.3, false);
-  { const lim = scene.children[scene.children.length - 1], lc = new THREE.Color(); // feuillus (couleurs palette.js)
-    leafy.forEach((_, i) => lim.setColorAt(i, lc.setHex(PALETTE.leafy[Math.floor(rand() * PALETTE.leafy.length)]))); if (lim.instanceColor) lim.instanceColor.needsUpdate = true; }
+  
+  // Leafy trees with realistic canopies
+  const lim = new THREE.InstancedMesh(createLeafyTree(), leafyMat, leafy.length);
+  leafy.forEach((it, i) => {
+    q.setFromAxisAngle(up, it.r);
+    const k = it.s * (0.9 + rand() * 0.3);
+    sc.set(k, k * (0.85 + rand() * 0.3), k);
+    v.set(it.x, it.y - 0.2, it.z);
+    lim.setMatrixAt(i, m.compose(v, q, sc));
+  });
+  lim.castShadow = true;
+  lim.receiveShadow = true;
+  scene.add(lim);
+  
   return firs.length + leafy.length;
 }
 

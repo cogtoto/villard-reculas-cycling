@@ -217,7 +217,7 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   const horizonBlue = new THREE.Color(0xc0ddf5);
   const deepBlue = new THREE.Color(0x1a66cc);
   
-  scene.background = horizonBlue;
+  scene.background = null; // Let sky dome show (not solid color)
   scene.fog = new THREE.Fog(horizonBlue, 1200, 2800); // Light fog matched to sky
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   

@@ -54,7 +54,7 @@ const PRESETS = {
     viewDistance: 3000,
     fogNear: 100,
     fogFar: 1200,
-    shadows: false,
+    shadows: true, // Zwift-style: shadows on all levels
     skyType: 'simple', // Simple Sky shader
     terrainLOD: 1, // Single LOD
     textureSize: 512,
@@ -66,7 +66,7 @@ const PRESETS = {
     viewDistance: 8000,
     fogNear: 150,
     fogFar: 2500,
-    shadows: false,
+    shadows: true, // Zwift-style: shadows on all levels
     skyType: 'simple',
     terrainLOD: 2,
     textureSize: 1024,

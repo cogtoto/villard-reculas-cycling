@@ -84,17 +84,17 @@ export function setupLighting(scene, renderer, quality, routeType) {
   const lights = scene.children.filter(obj => obj.isLight);
   lights.forEach(light => scene.remove(light));
   
-  // Zwift-style: low warm sun creating beautiful shadows
-  const sunDirection = new THREE.Vector3(0.5, 0.4, 0.7).normalize();
+  // Zwift-style: 30-35° sun from side creating shadows across road
+  const sunDirection = new THREE.Vector3(0.6, 0.55, 0.4).normalize(); // ~33° elevation
   
   // Warm sunny directional light
-  const sun = new THREE.DirectionalLight(0xfff6e8, 2.4);
+  const sun = new THREE.DirectionalLight(0xfff6e8, 2.6);
   sun.position.copy(sunDirection).multiplyScalar(1000);
   
   // Enable shadows on all quality levels (Zwift-style)
   sun.castShadow = true;
-  sun.shadow.bias = -0.0001;
-  sun.shadow.normalBias = 0.02;
+  sun.shadow.bias = -0.0005;
+  sun.shadow.normalBias = 0.03;
   
   // Shadow map size based on quality
   if (quality === 'high') {
@@ -108,13 +108,13 @@ export function setupLighting(scene, renderer, quality, routeType) {
     sun.shadow.mapSize.height = 1024;
   }
   
-  // Shadow frustum follows rider (updated in tick)
+  // Wide shadow frustum around rider (±60m) for long tree shadows
   sun.shadow.camera.near = 0.5;
-  sun.shadow.camera.far = 100;
-  sun.shadow.camera.left = -30;
-  sun.shadow.camera.right = 30;
-  sun.shadow.camera.top = 30;
-  sun.shadow.camera.bottom = -30;
+  sun.shadow.camera.far = 150;
+  sun.shadow.camera.left = -60;
+  sun.shadow.camera.right = 60;
+  sun.shadow.camera.top = 60;
+  sun.shadow.camera.bottom = -60;
   
   scene.add(sun);
   
