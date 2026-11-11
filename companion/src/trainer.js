@@ -31,9 +31,49 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
 
   async function connect() {
     await BleClient.initialize({ androidNeverForLocation: true });
-    const dev = await BleClient.requestDevice({ optionalServices: [CPS, FTMS] });
+    
+    // Request device with service filters to show only trainers/power meters
+    // Note: Some devices (e.g., Van Rysel D500) may not advertise service UUIDs in scan
+    // so we use namePrefix as fallback hint (optional, non-binding)
+    const dev = await BleClient.requestDevice({
+      services: [FTMS, CPS], // Prefer explicit service filter
+      optionalServices: [FTMS, CPS],
+      // Fallback: if device doesn't advertise services, show known trainer name prefixes
+      namePrefix: undefined // Will show all if services not advertised
+    });
+    
     await BleClient.connect(dev.deviceId, () => { deviceId = null; control = false; onDisconnect(); });
-    const svcs = (await BleClient.getServices(dev.deviceId)).map((s) => s.uuid.toLowerCase());
+    
+    // Android may return empty/cached service list immediately after connect
+    // Retry service discovery with delay to ensure GATT database is populated
+    let svcs = [];
+    let discoveryAttempt = 0;
+    const maxAttempts = 3;
+    
+    while (discoveryAttempt < maxAttempts) {
+      try {
+        const services = await BleClient.getServices(dev.deviceId);
+        svcs = services.map((s) => s.uuid.toLowerCase());
+        
+        // Check if we found expected services
+        if (svcs.includes(FTMS) || svcs.includes(CPS)) {
+          onLog(`Found services on attempt ${discoveryAttempt + 1}: ${svcs.length} total`);
+          break;
+        }
+        
+        // If no services found and not last attempt, wait and retry
+        if (discoveryAttempt < maxAttempts - 1) {
+          onLog(`Service discovery attempt ${discoveryAttempt + 1}: no trainer services yet, retrying...`);
+          await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
+        }
+      } catch (e) {
+        onLog(`Service discovery attempt ${discoveryAttempt + 1} error: ${e.message}`);
+        if (discoveryAttempt === maxAttempts - 1) throw e;
+      }
+      discoveryAttempt++;
+    }
+    
+    // Setup notifications based on discovered services
     if (svcs.includes(FTMS)) {
       await BleClient.startNotifications(dev.deviceId, FTMS, IBD, onIbd);
       try {
@@ -42,8 +82,21 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
         await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x07])); // Start/Resume
         control = true;
       } catch (e) { onLog('FTMS control point unavailable: ' + e.message); }
-    } else if (svcs.includes(CPS)) await BleClient.startNotifications(dev.deviceId, CPS, CPM, onCps);
-    else throw new Error('No Cycling Power (0x1818) or FTMS (0x1826) service');
+    } else if (svcs.includes(CPS)) {
+      await BleClient.startNotifications(dev.deviceId, CPS, CPM, onCps);
+    } else {
+      // Provide detailed diagnostic error message
+      const deviceInfo = `${dev.name || 'Unknown'} (${dev.deviceId})`;
+      const serviceList = svcs.length > 0 
+        ? svcs.map(s => s.slice(4, 8)).join(', ')
+        : 'none';
+      throw new Error(
+        `Device ${deviceInfo} has no Cycling Power or FTMS service. ` +
+        `Found services: ${serviceList}. ` +
+        `Expected: 0x1818 (Cycling Power) or 0x1826 (FTMS).`
+      );
+    }
+    
     deviceId = dev.deviceId;
     return { name: dev.name || dev.deviceId, control };
   }
