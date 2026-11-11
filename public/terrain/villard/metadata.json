@@ -1,0 +1,22 @@
+{
+  "version": "1.0",
+  "source": "AWS Terrain Tiles (Terrarium) z13 — SRTM/Copernicus/IGN",
+  "license": "AWS Terrain Tiles (includes IGN data)",
+  "attribution": "Source: IGN",
+  "bbox": {
+    "minLat": 45.058,
+    "maxLat": 45.165,
+    "minLon": 5.965,
+    "maxLon": 6.098
+  },
+  "chunks": {
+    "nx": 2,
+    "ny": 2,
+    "chunkSizeX": 266,
+    "chunkSizeY": 214
+  },
+  "step": 0.00025,
+  "minElevation": 702.6921997070312,
+  "maxElevation": 2822.031494140625,
+  "format": "int16 LE, row 0 = north"
+}

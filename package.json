@@ -1,6 +1,6 @@
 {
   "name": "velo-virtuel",
-  "version": "0.5.14",
+  "version": "0.5.15",
   "private": true,
   "type": "module",
   "scripts": {
@@ -28,6 +28,8 @@
     "@playwright/test": "^1.64.1",
     "concurrently": "^9.1.0",
     "playwright": "^1.64.1",
-    "vite": "^6.0.0"
+    "sharp": "^0.35.5",
+    "vite": "^6.0.0",
+    "xml2js": "^0.6.2"
   }
 }

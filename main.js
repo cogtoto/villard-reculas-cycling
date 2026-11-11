@@ -17,6 +17,7 @@ import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachin
 import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
 import { graphicsSettings, fpsCounter } from './graphics-settings.js';
 import { setupLighting } from './sky-system.js';
+import { RealTerrainSystem } from './real-terrain.js';
 
 installHeightFog(); // avant toute compilation de shader
 
@@ -27,6 +28,7 @@ const ROUTES = {
     description: 'descent + climb',
     gpx: '/villard-reculas.gpx',
     dem: { meta: '/dem-villard.json', bin: '/dem-villard.bin' },
+    realTerrain: '/terrain/villard', // Use real terrain chunks
     setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
     setupAtmosphere: (scene, renderer, sun, sunDir) => alpineAtmosphere(scene, renderer, sun, sunDir),
     setupDecor: (scene, track, terrain) => {
@@ -590,6 +592,12 @@ function tick() {
     }
   }
   if (seaMat) seaMat.uniforms.uTime.value = clock.elapsedTime;
+  
+  // Update real terrain LOD if loaded
+  if (window._realTerrain && window._realTerrain.loaded) {
+    window._realTerrain.updateLOD(camera.position, graphicsSettings.quality);
+  }
+  
   renderer.render(scene, camera);
   
   // Update FPS counter if visible
@@ -653,7 +661,36 @@ function loadRoute() {
       camera.far = graphicsSettings.getCameraFar();
       camera.updateProjectionMatrix();
       
-      const terrain = route.setupTerrain(scene, track, dem);
+      // Use real terrain if available and not on Low quality
+      let terrain;
+      if (route.realTerrain && graphicsSettings.quality !== 'low') {
+        console.log('Loading real terrain from:', route.realTerrain);
+        const realTerrainSystem = new RealTerrainSystem();
+        realTerrainSystem.load(scene, route.realTerrain).then(() => {
+          console.log('Real terrain loaded and rendered');
+          // Store for LOD updates
+          window._realTerrain = realTerrainSystem;
+        }).catch(err => {
+          console.warn('Real terrain failed, using fallback:', err);
+          // Fallback to procedural
+          terrain = route.setupTerrain(scene, track, dem);
+          buildRoad(scene, track, 4, terrain);
+          groundAt = terrain.heightAt;
+        });
+        
+        // Use procedural terrain for road/collision until real terrain loads
+        terrain = route.setupTerrain(scene, track, dem);
+        // Hide procedural terrain meshes if we're loading real terrain
+        scene.traverse(obj => {
+          if (obj.isMesh && obj.name && obj.name.includes('terrain')) {
+            obj.visible = false;
+          }
+        });
+      } else {
+        // Use procedural terrain
+        terrain = route.setupTerrain(scene, track, dem);
+      }
+      
       buildRoad(scene, track, 4, terrain);
       groundAt = terrain.heightAt;
       updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
