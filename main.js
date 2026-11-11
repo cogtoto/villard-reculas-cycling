@@ -62,6 +62,8 @@ let currentWorkout = null;
 let workoutStartTime = 0;
 let powerHistory = []; // For FTP test
 let cadenceHistory = []; // For FTP test failure detection
+let ftpTestConfirmShown = false; // Prevent multiple prompts
+let ftpTestRecoveryTarget = 0; // Store ERG target when showing prompt
 
 // --- FTP & zones de puissance Coggan (modifier ici) ---
 const FTP_KEY = 'vv.ftp';
@@ -423,6 +425,8 @@ function tick() {
         if (isERGActive()) {
           updateTargetPower(current.currentTarget);
         }
+        // Also send via sensors (for companion or direct BLE)
+        sensors.setTargetPower(current.currentTarget);
         
         // Record power/cadence history for FTP test
         powerHistory.push(state.watts || 0);
@@ -479,14 +483,16 @@ function tick() {
           }
         }
         
-        // Check for FTP test failure
-        if (currentWorkout.isTest) {
+        // Check for FTP test low power (show confirmation, don't auto-stop)
+        if (currentWorkout.isTest && !ftpTestConfirmShown) {
           const failure = detectRampTestFailure(currentWorkout, powerHistory, cadenceHistory, elapsed);
-          if (failure.failed) {
-            console.log('FTP test failed:', failure.reason);
-            const estimatedFTP = calculateEstimatedFTP(powerHistory);
-            const peak1MinPower = Math.round(Math.max(...powerHistory.slice(-60)));
-            showFTPResults(estimatedFTP, peak1MinPower, failure.reason);
+          if (failure.shouldPrompt) {
+            console.log('FTP test low power detected:', failure.reason);
+            ftpTestConfirmShown = true;
+            ftpTestRecoveryTarget = current.currentTarget;
+            // Drop ERG target to easy level while prompting
+            sensors.setTargetPower(60);
+            showFTPTestConfirm();
           }
         }
         
@@ -802,6 +808,16 @@ function showCoachingMessage(message, isCountdown = false) {
   }, duration);
 }
 
+// Show FTP test confirmation dialog
+function showFTPTestConfirm() {
+  document.getElementById('ftp-test-confirm-modal').style.display = 'flex';
+}
+
+// Hide FTP test confirmation dialog
+function hideFTPTestConfirm() {
+  document.getElementById('ftp-test-confirm-modal').style.display = 'none';
+}
+
 // Show FTP test results screen
 function showFTPResults(estimatedFTP, peak1MinPower, reason = 'Test complete') {
   const oldFTP = FTP_W;
@@ -830,6 +846,33 @@ function showFTPResults(estimatedFTP, peak1MinPower, reason = 'Test complete') {
   // Stop ERG and hide workout HUD
   stopERGMode();
   document.getElementById('workout-hud').style.display = 'none';
+}
+
+// FTP Test Confirmation dialog button handlers
+const ftpTestEndBtn = document.getElementById('ftp-test-end-btn');
+const ftpTestContinueBtn = document.getElementById('ftp-test-continue-btn');
+
+if (ftpTestEndBtn) {
+  ftpTestEndBtn.onclick = () => {
+    hideFTPTestConfirm();
+    // End the test and calculate FTP
+    const estimatedFTP = calculateEstimatedFTP(powerHistory);
+    const peak1MinPower = Math.round(Math.max(...powerHistory.slice(-60)));
+    showFTPResults(estimatedFTP, peak1MinPower, 'Test ended by user');
+  };
+}
+
+if (ftpTestContinueBtn) {
+  ftpTestContinueBtn.onclick = () => {
+    hideFTPTestConfirm();
+    // Re-arm the prompt for next time power drops
+    ftpTestConfirmShown = false;
+    // Resume ERG target
+    if (ftpTestRecoveryTarget > 0) {
+      sensors.setTargetPower(ftpTestRecoveryTarget);
+    }
+    showCoachingMessage('Test resumed — keep pushing!', false);
+  };
 }
 
 // FTP Results modal button handlers

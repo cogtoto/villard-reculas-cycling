@@ -1,5 +1,6 @@
 import { createTrainer } from './trainer.js';
 import { createPowerChart, zoneFor } from './chart.js';
+import { KeepAwake } from '@capacitor-community/keep-awake';
 
 const $ = (id) => document.getElementById(id);
 const log = (m) => { console.log(m); const l = $('log'); l.textContent = (new Date().toLocaleTimeString() + ' ' + m + '\n' + l.textContent).slice(0, 3000); };
@@ -30,7 +31,15 @@ function connectPc() {
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (Number(m.ftp) > 0) { ftp = Number(m.ftp); $('ftp').value = ftp; localStorage.setItem('vv.ftp', String(ftp)); }
-    if (m.type === 'sim' || m.type === 'welcome') { $('grade').textContent = (Number(m.gradePct) || 0).toFixed(1); trainer.setSimulation(Number(m.gradePct) || 0); }
+    if (m.type === 'sim' || m.type === 'welcome') { 
+      $('grade').textContent = (Number(m.gradePct) || 0).toFixed(1); 
+      trainer.setSimulation(Number(m.gradePct) || 0); 
+    }
+    if (m.type === 'erg') {
+      const targetWatts = Number(m.targetWatts) || 0;
+      $('grade').textContent = `ERG ${targetWatts}W`;
+      trainer.setTargetPower(targetWatts);
+    }
   };
   ws.onerror = () => log('PC socket error');
   ws.onclose = () => { setStatus('pc-status', 'disconnected — retrying', 'off'); ws = null; if (wantPc) retry = setTimeout(connectPc, 2000); };
@@ -68,3 +77,6 @@ for (const [id, delta] of [['gear-up', 1], ['gear-down', -1]]) {
 }
 
 if ($('ip').value) connectPc();
+
+// Keep screen awake at JavaScript level (redundant with FLAG_KEEP_SCREEN_ON, but belt-and-braces)
+KeepAwake.keepAwake().catch(e => log('KeepAwake unavailable: ' + e.message));

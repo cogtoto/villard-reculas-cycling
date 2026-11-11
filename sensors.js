@@ -94,6 +94,21 @@ export function createSensors(onData, { onLog = () => {}, onShift = () => {} } =
         }
       } catch (e) { onLog('sim: ' + e.message); } finally { simBusy = false; pendingGrade = null; }
     },
+    // FTMS « Set Target Power » (0x05) for ERG mode : watts as sint16
+    async setTargetPower(watts) {
+      if (!trainer) { // home trainer via companion → relay via server
+        if (ws && ws.readyState === 1 && performance.now() - viaCompanion < 5000) ws.send(JSON.stringify({ type: 'erg', targetWatts: watts }));
+        return;
+      }
+      if (simBusy) return; // skip if simulation write is in progress
+      simBusy = true;
+      try {
+        const a = new DataView(new ArrayBuffer(3));
+        a.setUint8(0, 0x05); // Set Target Power opcode
+        a.setInt16(1, Math.round(Math.max(0, Math.min(4000, watts))), true); // watts, clamped 0-4000
+        await BleClient.write(trainer, FTMS, FTMS_CP, a);
+      } catch (e) { onLog('erg: ' + e.message); } finally { simBusy = false; }
+    },
     sendRoute(gradePct, altM) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'route', gradePct, altM })); },
   };
 }

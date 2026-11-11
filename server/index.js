@@ -28,6 +28,7 @@ wss.on('connection', (ws) => {
     }
     if (m.type === 'route') { clientGrade = Number(m.gradePct) || 0; clientAlt = Number(m.altM) || 0; }
     else if (m.type === 'sim') { const d = JSON.stringify({ type: 'sim', gradePct: Number(m.gradePct) || 0 }); for (const c of companions()) c.send(d); }
+    else if (m.type === 'erg') { const d = JSON.stringify({ type: 'erg', targetWatts: Number(m.targetWatts) || 0 }); for (const c of companions()) c.send(d); }
     else if (ws.isCompanion && m.type === 'companion') {
       companionOk = true; companionTs = Date.now();
       const watts = Number(m.watts) || 0;

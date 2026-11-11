@@ -72,6 +72,18 @@
       <button id="stop-test-btn" style="display:none;margin-top:8px;padding:6px 12px;font-size:14px;border:0;border-radius:6px;background:#e74c3c;color:#fff;font-weight:700">Stop Test</button>
     </div>
     
+    <!-- FTP Test Confirmation Modal -->
+    <div id="ftp-test-confirm-modal" class="vv-modal" style="display:none">
+      <div class="vv-box" style="max-width:450px;text-align:center">
+        <h2 style="margin:0 0 16px;font-size:24px;color:#e74c3c">⚠️ Power Dropped</h2>
+        <p style="margin:0 0 24px;font-size:16px;line-height:1.5">Your power has dropped near zero. Do you want to end the FTP test now?</p>
+        <div style="display:flex;gap:12px;justify-content:center">
+          <button id="ftp-test-end-btn" class="vv-b" style="background:#e74c3c;font-size:16px;padding:12px 24px">End Test</button>
+          <button id="ftp-test-continue-btn" class="vv-b" style="background:#27ae60;font-size:16px;padding:12px 24px">Continue</button>
+        </div>
+      </div>
+    </div>
+    
     <!-- FTP Test Results Modal -->
     <div id="ftp-results-modal" class="vv-modal" style="display:none">
       <div class="vv-box" style="max-width:500px;text-align:center">

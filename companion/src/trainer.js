@@ -162,5 +162,18 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
     } catch (e) { onLog('sim: ' + e.message); } finally { simBusy = false; pendingGrade = null; }
   }
 
-  return { connect, setSimulation, get connected() { return !!deviceId; } };
+  // FTMS Set Target Power (0x05): ERG mode, watts as sint16
+  async function setTargetPower(watts) {
+    if (!deviceId || !control) return;
+    if (simBusy) return; // skip if sim write in progress
+    simBusy = true;
+    try {
+      const a = new DataView(new ArrayBuffer(3));
+      a.setUint8(0, 0x05); // Set Target Power opcode
+      a.setInt16(1, Math.round(Math.max(0, Math.min(4000, watts))), true); // watts, clamped 0-4000
+      await BleClient.write(deviceId, FTMS, FTMS_CP, a);
+    } catch (e) { onLog('erg: ' + e.message); } finally { simBusy = false; }
+  }
+
+  return { connect, setSimulation, setTargetPower, get connected() { return !!deviceId; } };
 }

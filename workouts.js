@@ -207,37 +207,28 @@ export function getCurrentInterval(workout, elapsedSeconds) {
   return null;
 }
 
-// Detect failure for FTP ramp test
-// Returns { failed: boolean, reason: string }
+// Detect potential failure for FTP ramp test (low power)
+// Returns { shouldPrompt: boolean, reason: string }
+// Does NOT auto-stop - only suggests user confirmation
 export function detectRampTestFailure(workout, recentPowerSamples, recentCadenceSamples, elapsedSeconds) {
-  if (!workout.isTest) return { failed: false };
+  if (!workout.isTest) return { shouldPrompt: false };
   
   const current = getCurrentInterval(workout, elapsedSeconds);
   if (!current || current.interval.type !== 'ramp') {
-    return { failed: false }; // Only check during ramp intervals
+    return { shouldPrompt: false }; // Only check during ramp intervals
   }
   
-  const target = current.currentTarget;
-  
-  // Check cadence: < 60 rpm for 10 seconds
-  if (recentCadenceSamples.length >= 10) {
-    const last10 = recentCadenceSamples.slice(-10);
-    const avgCadence = last10.reduce((sum, c) => sum + c, 0) / last10.length;
-    if (avgCadence < 60) {
-      return { failed: true, reason: 'Cadence dropped below 60 rpm' };
+  // Check for very low power (< 20W) sustained for 5+ seconds
+  // This indicates the rider has likely stopped pedaling or given up
+  if (recentPowerSamples.length >= 5) {
+    const last5 = recentPowerSamples.slice(-5);
+    const avgPower = last5.reduce((sum, p) => sum + p, 0) / last5.length;
+    if (avgPower < 20) {
+      return { shouldPrompt: true, reason: 'Power dropped near zero' };
     }
   }
   
-  // Check power: < 80% of target for 15 seconds
-  if (recentPowerSamples.length >= 15) {
-    const last15 = recentPowerSamples.slice(-15);
-    const avgPower = last15.reduce((sum, p) => sum + p, 0) / last15.length;
-    if (avgPower < target * 0.8) {
-      return { failed: true, reason: 'Power below 80% of target' };
-    }
-  }
-  
-  return { failed: false };
+  return { shouldPrompt: false };
 }
 
 // Calculate estimated FTP from best 1-minute power (75% of best)
