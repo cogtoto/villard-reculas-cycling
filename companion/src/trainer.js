@@ -30,6 +30,7 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
   }
 
   async function connect() {
+    const t0 = Date.now();
     await BleClient.initialize({ androidNeverForLocation: true });
     
     // Request device with service filters to show only trainers/power meters
@@ -38,71 +39,112 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
       optionalServices: [FTMS, CPS]
     });
     
-    onLog(`Connecting to ${dev.name || dev.deviceId}...`);
+    onLog(`[+${Date.now()-t0}ms] Connecting to ${dev.name || dev.deviceId}...`);
     await BleClient.connect(dev.deviceId, () => { deviceId = null; control = false; onDisconnect(); });
-    onLog('Connected, discovering services...');
+    onLog(`[+${Date.now()-t0}ms] Connected. Waiting for service discovery...`);
     
-    // On Android, getServices() returns cached data and may be empty
-    // We know from advertisement that FTMS/CPS exists, so try direct connection
-    // Strategy: Try FTMS first (preferred), then fall back to CPS
-    let connectedService = null;
+    // Android needs explicit time for GATT service discovery to complete
+    // Discovery happens automatically after connect but takes 500-2000ms
+    // Poll getServices() until we find FTMS or CPS (up to 10 seconds)
+    let svcs = [];
+    let attempt = 0;
+    const maxAttempts = 20; // 20 attempts × 500ms = 10 seconds max
+    const delayMs = 500;
     
-    try {
-      // Try FTMS Indoor Bike Data characteristic
-      onLog('Attempting FTMS connection...');
-      await BleClient.startNotifications(dev.deviceId, FTMS, IBD, onIbd);
-      connectedService = 'FTMS';
-      onLog('FTMS data notifications started');
-      
-      // Try to enable FTMS control point for ERG mode
+    while (attempt < maxAttempts) {
       try {
-        await BleClient.startNotifications(dev.deviceId, FTMS, FTMS_CP, () => {});
-        await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x00])); // Request Control
-        await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x07])); // Start/Resume
-        control = true;
-        onLog('FTMS control point enabled (ERG mode available)');
-      } catch (e) {
-        onLog('FTMS control point unavailable (power data only): ' + e.message);
-      }
-    } catch (ftmsError) {
-      onLog('FTMS not available: ' + ftmsError.message);
-      
-      // Fall back to Cycling Power Service
-      try {
-        onLog('Attempting Cycling Power connection...');
-        await BleClient.startNotifications(dev.deviceId, CPS, CPM, onCps);
-        connectedService = 'CPS';
-        onLog('Cycling Power notifications started');
-      } catch (cpsError) {
-        onLog('Cycling Power not available: ' + cpsError.message);
+        const services = await BleClient.getServices(dev.deviceId);
+        svcs = services.map((s) => s.uuid.toLowerCase());
         
-        // Both failed - provide diagnostic info
-        // Try getServices for diagnostic purposes only
-        let svcs = [];
-        try {
-          const services = await BleClient.getServices(dev.deviceId);
-          svcs = services.map((s) => s.uuid.toLowerCase());
-        } catch (e) {
-          onLog('getServices also failed: ' + e.message);
+        if (svcs.includes(FTMS) || svcs.includes(CPS)) {
+          onLog(`[+${Date.now()-t0}ms] Discovery complete: found ${svcs.length} services (attempt ${attempt + 1})`);
+          break;
         }
         
-        const deviceInfo = `${dev.name || 'Unknown'} (${dev.deviceId})`;
-        const serviceList = svcs.length > 0 
-          ? svcs.map(s => s.slice(4, 8)).join(', ')
-          : 'none (getServices returned empty)';
+        if (attempt === 0 && svcs.length === 0) {
+          onLog(`[+${Date.now()-t0}ms] Services not ready yet, waiting...`);
+        }
         
-        throw new Error(
-          `Device ${deviceInfo} connection failed. ` +
-          `Advertisement showed FTMS/CPS but characteristics not accessible. ` +
-          `FTMS error: ${ftmsError.message}. CPS error: ${cpsError.message}. ` +
-          `Services from getServices: ${serviceList}. ` +
-          `Try: Turn trainer off/on, unpair in phone Bluetooth settings, then retry.`
-        );
+        attempt++;
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      } catch (e) {
+        onLog(`[+${Date.now()-t0}ms] getServices attempt ${attempt + 1} error: ${e.message}`);
+        attempt++;
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
       }
     }
     
+    // If still no services after 10 seconds, try disconnect/reconnect once
+    if (!svcs.includes(FTMS) && !svcs.includes(CPS)) {
+      onLog(`[+${Date.now()-t0}ms] Service discovery timeout. Trying disconnect/reconnect...`);
+      try {
+        await BleClient.disconnect(dev.deviceId);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        await BleClient.connect(dev.deviceId, () => { deviceId = null; control = false; onDisconnect(); });
+        onLog(`[+${Date.now()-t0}ms] Reconnected. Checking services...`);
+        
+        // Wait a bit and try once more
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const services = await BleClient.getServices(dev.deviceId);
+        svcs = services.map((s) => s.uuid.toLowerCase());
+        onLog(`[+${Date.now()-t0}ms] After reconnect: ${svcs.length} services found`);
+      } catch (e) {
+        onLog(`[+${Date.now()-t0}ms] Reconnect failed: ${e.message}`);
+      }
+    }
+    
+    // Now try to connect to FTMS or CPS based on discovered services
+    let connectedService = null;
+    
+    if (svcs.includes(FTMS)) {
+      try {
+        onLog(`[+${Date.now()-t0}ms] Starting FTMS notifications...`);
+        await BleClient.startNotifications(dev.deviceId, FTMS, IBD, onIbd);
+        connectedService = 'FTMS';
+        onLog(`[+${Date.now()-t0}ms] FTMS data notifications started`);
+        
+        // Try to enable FTMS control point for ERG mode
+        try {
+          await BleClient.startNotifications(dev.deviceId, FTMS, FTMS_CP, () => {});
+          await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x00])); // Request Control
+          await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x07])); // Start/Resume
+          control = true;
+          onLog(`[+${Date.now()-t0}ms] FTMS control point enabled (ERG mode)`);
+        } catch (e) {
+          onLog(`[+${Date.now()-t0}ms] FTMS control unavailable: ${e.message}`);
+        }
+      } catch (e) {
+        throw new Error(`FTMS service found but startNotifications failed: ${e.message}`);
+      }
+    } else if (svcs.includes(CPS)) {
+      try {
+        onLog(`[+${Date.now()-t0}ms] Starting Cycling Power notifications...`);
+        await BleClient.startNotifications(dev.deviceId, CPS, CPM, onCps);
+        connectedService = 'CPS';
+        onLog(`[+${Date.now()-t0}ms] Cycling Power notifications started`);
+      } catch (e) {
+        throw new Error(`CPS service found but startNotifications failed: ${e.message}`);
+      }
+    } else {
+      // Neither service found after all attempts
+      const deviceInfo = `${dev.name || 'Unknown'} (${dev.deviceId})`;
+      const serviceList = svcs.length > 0 
+        ? svcs.map(s => s.slice(4, 8)).join(', ')
+        : 'none';
+      throw new Error(
+        `[+${Date.now()-t0}ms] No FTMS or CPS service found after ${attempt} attempts. ` +
+        `Device: ${deviceInfo}. Found services: ${serviceList}. ` +
+        `Expected: 1826 (FTMS) or 1818 (CPS). ` +
+        `Try: Power cycle trainer, unpair in Bluetooth settings, retry.`
+      );
+    }
+    
     deviceId = dev.deviceId;
-    onLog(`Successfully connected via ${connectedService}`);
+    onLog(`[+${Date.now()-t0}ms] ✓ Connected via ${connectedService}`);
     return { name: dev.name || dev.deviceId, control };
   }
 
