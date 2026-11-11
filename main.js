@@ -665,10 +665,12 @@ function loadRoute() {
       let terrain;
       if (route.realTerrain) {
         console.log('Loading real terrain from:', route.realTerrain);
-        // Pass quality to terrain system
+        console.log('Track origin:', track.origin);
+        
+        // Pass quality and GPX origin to terrain system
         window._terrainQuality = graphicsSettings.quality;
         const realTerrainSystem = new RealTerrainSystem();
-        realTerrainSystem.load(scene, route.realTerrain).then(() => {
+        realTerrainSystem.load(scene, route.realTerrain, track.origin).then(() => {
           console.log('Real terrain loaded and rendered');
           // Store for LOD updates
           window._realTerrain = realTerrainSystem;
@@ -680,14 +682,28 @@ function loadRoute() {
           groundAt = terrain.heightAt;
         });
         
-        // Use procedural terrain for road/collision until real terrain loads
-        terrain = route.setupTerrain(scene, track, dem);
-        // Hide procedural terrain meshes if we're loading real terrain
-        scene.traverse(obj => {
-          if (obj.isMesh && obj.name && obj.name.includes('terrain')) {
-            obj.visible = false;
+        // DON'T build procedural terrain when using real terrain
+        // Create minimal terrain stub for road collision
+        terrain = {
+          center: { x: 0, y: 0, z: 0 },
+          span: 20000,
+          heightAt: (x, z) => {
+            // Return track elevation at nearest point
+            let minDist = Infinity;
+            let nearestY = 0;
+            for (const pt of track.pts) {
+              const d = Math.hypot(pt.x - x, pt.z - z);
+              if (d < minDist) {
+                minDist = d;
+                nearestY = pt.y;
+              }
+            }
+            return nearestY;
           }
-        });
+        };
+        
+        // Don't call setupTerrain or add procedural decor
+        // Skip setupDecor that adds trees/chalets on procedural terrain
       } else {
         // Use procedural terrain
         terrain = route.setupTerrain(scene, track, dem);
@@ -695,7 +711,10 @@ function loadRoute() {
       
       buildRoad(scene, track, 4, terrain);
       groundAt = terrain.heightAt;
-      updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
+      
+      // Create minimap (works with real or procedural terrain)
+      const classifyFn = terrain.classify || (() => 'flat');
+      updateMinimap = createMinimap(track, 200, classifyFn, teleportTo, route.zoneColors);
       minimapCanvas = updateMinimap.canvas; // Store reference for show/hide
       
       // Hide minimap in workout modes (to avoid overlap with power indicators)
@@ -704,7 +723,13 @@ function loadRoute() {
         console.log('Minimap hidden: workout mode active');
       }
       
-      route.setupDecor(scene, track, terrain);
+      // Only add procedural decor if NOT using real terrain
+      if (!route.realTerrain) {
+        route.setupDecor(scene, track, terrain);
+      } else {
+        console.log('Skipping procedural decor (real terrain active)');
+        // Skip trees/chalets/roadside on real terrain (ortho shows forests already)
+      }
       
       // Load and place village signs
       const villageFile = selectedRoute === 'normandy' ? '/normandy-villages.json' : '/villard-villages.json';

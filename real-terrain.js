@@ -13,7 +13,7 @@ class TerrainChunk {
   
   // Generate terrain mesh at specified LOD
   // LOD 0: full resolution, LOD 1: half resolution
-  generateMesh(lodLevel = 0) {
+  generateMesh(lodLevel = 0, sizeX, sizeZ) {
     const skip = Math.pow(2, lodLevel);
     const nx = Math.floor(this.chunkMeta.chunkSizeX / skip);
     const ny = Math.floor(this.chunkMeta.chunkSizeY / skip);
@@ -21,13 +21,7 @@ class TerrainChunk {
     const geometry = new THREE.PlaneGeometry(1, 1, nx - 1, ny - 1);
     const positions = geometry.attributes.position.array;
     
-    // Scale to real-world coordinates
-    const latSpan = (this.metadata.bbox.maxLat - this.metadata.bbox.minLat) / 2; // 2x2 chunks
-    const lonSpan = (this.metadata.bbox.maxLon - this.metadata.bbox.minLon) / 2;
-    const sizeX = lonSpan * 76000; // ~76km per degree longitude at this latitude
-    const sizeY = latSpan * 111000; // ~111km per degree latitude
-    
-    // Apply elevation
+    // Apply elevation and scale to real-world size
     for (let y = 0; y < ny; y++) {
       for (let x = 0; x < nx; x++) {
         const srcX = x * skip;
@@ -38,7 +32,7 @@ class TerrainChunk {
         const idx = (y * nx + x) * 3;
         positions[idx] = (x / (nx - 1) - 0.5) * sizeX;
         positions[idx + 1] = elevation;
-        positions[idx + 2] = (y / (ny - 1) - 0.5) * sizeY;
+        positions[idx + 2] = (y / (ny - 1) - 0.5) * sizeZ;
       }
     }
     
@@ -104,8 +98,11 @@ export class RealTerrainSystem {
     this.loaded = false;
   }
   
-  async load(scene, basePath) {
+  async load(scene, basePath, gpxOrigin) {
     console.log('Loading real terrain from:', basePath);
+    console.log('GPX origin:', gpxOrigin);
+    
+    this.gpxOrigin = gpxOrigin;
     
     // Load metadata
     const metaResponse = await fetch(`${basePath}/metadata.json`);
@@ -183,33 +180,44 @@ export class RealTerrainSystem {
   }
   
   generateAllMeshes(scene, quality = 'medium') {
-    const chunkOrder = [
-      { name: 'nw', x: -1, z: -1 },
-      { name: 'ne', x: 1, z: -1 },
-      { name: 'sw', x: -1, z: 1 },
-      { name: 'se', x: 1, z: 1 }
-    ];
+    // Use same equirectangular projection as GPX loader
+    const R = 6371000;
+    const k = Math.cos((this.gpxOrigin.lat0 * Math.PI) / 180);
     
-    const latSpan = (this.metadata.bbox.maxLat - this.metadata.bbox.minLat) / 2;
-    const lonSpan = (this.metadata.bbox.maxLon - this.metadata.bbox.minLon) / 2;
-    const chunkSizeX = lonSpan * 76000 / 2; // meters
-    const chunkSizeZ = latSpan * 111000 / 2; // meters
+    // Convert lat/lon bbox to local coordinates (same as GPX)
+    const latToZ = (lat) => -((lat - this.gpxOrigin.lat0) * Math.PI / 180) * R;
+    const lonToX = (lon) => ((lon - this.gpxOrigin.lon0) * Math.PI / 180) * R * k;
     
-    for (const pos of chunkOrder) {
-      const chunk = this.chunks.get(pos.name);
+    // Calculate chunk positions in local coordinates
+    for (const ortho of this.metadata.orthoimagery) {
+      const chunk = this.chunks.get(ortho.bbox.name);
       if (!chunk) continue;
+      
+      // Center of this chunk's bbox
+      const centerLat = (ortho.bbox.minLat + ortho.bbox.maxLat) / 2;
+      const centerLon = (ortho.bbox.minLon + ortho.bbox.maxLon) / 2;
+      const centerX = lonToX(centerLon);
+      const centerZ = latToZ(centerLat);
+      
+      // Size of chunk in meters
+      const latSpan = ortho.bbox.maxLat - ortho.bbox.minLat;
+      const lonSpan = ortho.bbox.maxLon - ortho.bbox.minLon;
+      const sizeX = lonSpan * Math.PI / 180 * R * k;
+      const sizeZ = latSpan * Math.PI / 180 * R;
+      
+      console.log(`Chunk ${ortho.bbox.name}: center (${centerX.toFixed(0)}, ${centerZ.toFixed(0)}), size ${sizeX.toFixed(0)} × ${sizeZ.toFixed(0)} m`);
       
       // Generate LOD 0 (high detail) - skip on Low quality
       if (quality !== 'low') {
-        const lod0 = chunk.generateMesh(0);
-        lod0.position.set(pos.x * chunkSizeX, 0, pos.z * chunkSizeZ);
+        const lod0 = chunk.generateMesh(0, sizeX, sizeZ);
+        lod0.position.set(centerX, 0, centerZ);
         chunk.meshes.lod0 = lod0;
         scene.add(lod0);
       }
       
       // Generate LOD 1 (low detail) - always generate
-      const lod1 = chunk.generateMesh(1);
-      lod1.position.set(pos.x * chunkSizeX, 0, pos.z * chunkSizeZ);
+      const lod1 = chunk.generateMesh(1, sizeX, sizeZ);
+      lod1.position.set(centerX, 0, centerZ);
       lod1.visible = quality === 'low' ? true : false; // Visible on Low, hidden otherwise
       chunk.meshes.lod1 = lod1;
       scene.add(lod1);
