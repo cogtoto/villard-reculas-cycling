@@ -651,9 +651,7 @@ function loadRoute() {
       // Setup fog based on route and quality
       const fogSettings = graphicsSettings.getFogSettings(selectedRoute);
       scene.fog = new THREE.Fog(fogSettings.color, fogSettings.near, fogSettings.far);
-      if (!scene.background || scene.background.isColor) {
-        scene.background = fogSettings.color;
-      }
+      // Don't set scene.background - let sky dome show through
       
       // Update camera far plane
       camera.far = graphicsSettings.getCameraFar();
