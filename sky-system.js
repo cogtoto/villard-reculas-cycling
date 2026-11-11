@@ -117,7 +117,7 @@ export function setupLighting(scene, renderer, quality, routeType) {
     groundColor = 0x7a8a60; // Grass
   }
   
-  const ambient = new THREE.HemisphereLight(skyColor, groundColor, 0.6);
+  const ambient = new THREE.HemisphereLight(skyColor, groundColor, 1.2);
   scene.add(ambient);
   
   // Setup sky based on quality

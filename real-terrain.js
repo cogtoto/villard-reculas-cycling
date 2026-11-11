@@ -53,12 +53,17 @@ class TerrainChunk {
     }
     
     // Material with real orthoimagery texture
-    // Use MeshLambertMaterial for proper lighting with photo texture
+    // Use MeshStandardMaterial with emissive to ensure visibility
     let material;
     if (this.orthoTexture) {
       console.log(`Chunk ${this.name} LOD${lodLevel}: Creating material with texture`, this.orthoTexture.image?.width, 'x', this.orthoTexture.image?.height);
-      material = new THREE.MeshLambertMaterial({
+      material = new THREE.MeshStandardMaterial({
         map: this.orthoTexture,
+        roughness: 1.0,
+        metalness: 0.0,
+        emissive: 0xffffff,
+        emissiveMap: this.orthoTexture,
+        emissiveIntensity: 0.3,
         side: THREE.FrontSide
       });
       // Force texture update
