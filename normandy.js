@@ -1,6 +1,7 @@
 // Décor Normandie ULTRA-RÉALISTE — Three.js avec PBR, textures procédurales, atmosphère
 import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
+import { addCloudsToSky } from './clouds.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -100,9 +101,15 @@ export function buildNormandyTerrain(scene, track, dem) {
     let y = demAt(x, z);
     const nr = nearest(x, z, 1);
     if (nr.d < 300) {
+      // Road corridor: terrain always below road (road at nr.y + 0.25)
       const t = THREE.MathUtils.smoothstep(nr.d, 14, 70);
-      y = (nr.y - 0.3) * (1 - t) + y * t;
-      y = Math.min(y, nr.y - 0.4 + Math.max(0, nr.d - 7) * 0.03);
+      y = (nr.y - 0.35) * (1 - t) + y * t;
+      // Under road: must be at least 50cm below
+      if (nr.d < 7) {
+        y = Math.min(y, nr.y - 0.5);
+      } else {
+        y = Math.min(y, nr.y - 0.5 + Math.max(0, nr.d - 7) * 0.03);
+      }
     }
     pos.setY(i, y);
   }
@@ -243,11 +250,12 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   );
   scene.add(sunSphere);
   
-  // Deep blue sky dome (Zwift-style) - render first, no depth test
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 48, 24), new THREE.ShaderMaterial({
+  // Deep blue sky dome (Zwift-style) - NO tone mapping
+  const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    depthTest: false, // Always render behind everything
+    depthTest: false,
+    toneMapped: false, // Critical: bypass ACES tone mapping
     uniforms: {
       uHorizon: { value: horizonBlue },
       uMid: { value: new THREE.Color(0x5599dd) },
@@ -270,30 +278,35 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
         
         // Deep blue gradient (Zwift-style)
         vec3 c;
-        if (h < 0.25) {
-          c = mix(uHorizon, uMid, h / 0.25);
+        if (h < 0.22) {
+          c = mix(uHorizon, uMid, h / 0.22);
         } else {
-          c = mix(uMid, uTop, (h - 0.25) / 0.75);
+          c = mix(uMid, uTop, (h - 0.22) / 0.78);
         }
         
-        // Halo solaire
+        // Sun glow
         float sunDot = max(dot(normalize(vDir), normalize(uSun)), 0.0);
-        float sunGlow = pow(sunDot, 16.0) * 0.25 + pow(sunDot, 4.0) * 0.12;
-        c += vec3(1.0, 0.98, 0.9) * sunGlow;
+        float sunGlow = pow(sunDot, 16.0) * 0.22 + pow(sunDot, 4.0) * 0.10;
+        c += vec3(1.0, 0.97, 0.88) * sunGlow;
         
+        // Output sRGB directly
         gl_FragColor = vec4(c, 1.0);
       }
     `,
-  }));
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 48, 24), skyMat);
   dome.frustumCulled = false;
-  dome.renderOrder = -999; // Render first (before terrain)
+  dome.renderOrder = -999;
   scene.add(dome);
+  
+  // Add white clouds
+  const clouds = addCloudsToSky(scene, new THREE.Vector3(0, 0, 0), 450000, 8);
   
   // Balanced ambient light for good visibility
   const ambient = new THREE.AmbientLight(0xffffff, 0.7);
   scene.add(ambient);
   
-  return { dome, fog: scene.fog };
+  return { dome, clouds, fog: scene.fog };
 }
 
 // Arbres réalistes avec plusieurs sphères pour forme naturelle

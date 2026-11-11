@@ -431,13 +431,29 @@ export function buildRoad(scene, track, width = 4, terrain = null, useRealTerrai
     return g;
   };
   const h = width / 2, side = THREE.DoubleSide;
-  const road = new THREE.Mesh(ribbon(h, -h, 0.2, 6), new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.92, metalness: 0, side, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  // Road lifted 25cm and with strong polygonOffset to always stay above terrain
+  const road = new THREE.Mesh(ribbon(h, -h, 0.25, 6), new THREE.MeshStandardMaterial({ 
+    map: asphalt, 
+    roughness: 0.92, 
+    metalness: 0, 
+    side, 
+    polygonOffset: true, 
+    polygonOffsetFactor: -3, 
+    polygonOffsetUnits: -3 
+  }));
   road.receiveShadow = true; road.frustumCulled = false; scene.add(road);
   
   // Grass verges (no grey shoulders, no white edge lines per user preference)
   if (!useRealTerrain) {
-    const vergeMat = new THREE.MeshStandardMaterial({ color: 0x7c8a50, roughness: 1, side, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-    scene.add(new THREE.Mesh(ribbon(h + 0.6, h, 0.05, 6), vergeMat), new THREE.Mesh(ribbon(-h, -h - 0.6, 0.05, 6), vergeMat));
+    const vergeMat = new THREE.MeshStandardMaterial({ 
+      color: 0x7c8a50, 
+      roughness: 1, 
+      side, 
+      polygonOffset: true, 
+      polygonOffsetFactor: -2, 
+      polygonOffsetUnits: -2 
+    });
+    scene.add(new THREE.Mesh(ribbon(h + 0.6, h, 0.08, 6), vergeMat), new THREE.Mesh(ribbon(-h, -h - 0.6, 0.08, 6), vergeMat));
   }
   
   // NO road markings (no center line, no edge lines per user preference for alpine roads)

@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 import { PALETTE } from './palette.js';
+import { addCloudsToSky } from './clouds.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -86,11 +87,17 @@ export function buildAlpineTerrain(scene, track, dem) {
     let y = demAt(x, z);
     const nr = nearest(x, z, 1);
     if (nr.d < 300) {
-      // près de la chaussée : altitude GPX lissée (écart MNT/GPX médian ≈ 6 m), talus déblai/remblai
+      // Road corridor: terrain always below road (road at nr.y + 0.25)
       const t = THREE.MathUtils.smoothstep(nr.d, 14, 70);
-      y = (nr.y - 0.3) * (1 - t) + y * t;
-      y = Math.min(y, nr.y - 0.4 + Math.max(0, nr.d - 7) * 0.8);
-      y = Math.max(y, nr.y - 0.4 - Math.max(0, nr.d - 7) * 1.0);
+      y = (nr.y - 0.35) * (1 - t) + y * t; // Start 35cm below GPX
+      // Under road: must be at least 50cm below to prevent z-fighting
+      if (nr.d < 7) {
+        y = Math.min(y, nr.y - 0.5);
+      } else {
+        // Slopes away from road
+        y = Math.min(y, nr.y - 0.5 + Math.max(0, nr.d - 7) * 0.8);
+        y = Math.max(y, nr.y - 0.5 - Math.max(0, nr.d - 7) * 1.0);
+      }
     }
     if (nr.d > 25 && waterAt(x, z)) y = Math.min(y, WL - 4); // fond du lac sous la surface
     pos.setY(i, y);
@@ -246,26 +253,35 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   sun.color.set(0xfff6e8); sun.intensity = 2.4;
   renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
   
-  // Deep blue sky dome (Zwift-style) - render first, no depth write
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 32, 16), new THREE.ShaderMaterial({
+  // Deep blue sky dome (Zwift-style) - NO tone mapping, pure blue output
+  const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, 
     depthWrite: false,
-    depthTest: false, // Always render behind everything
+    depthTest: false,
+    toneMapped: false, // Critical: bypass ACES tone mapping
     uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
     vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
       void main(){ 
         float h = clamp(vD.y, 0.0, 1.0);
-        vec3 c = mix(uHor, uTop, pow(h, 0.35)); // Stronger gradient for deeper blue at top
+        // Deep gradient: horizon (light blue) to zenith (deep blue)
+        vec3 c = mix(uHor, uTop, pow(h, 0.28));
+        // Sun glow
         float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0);
-        c += vec3(1.0, 0.92, 0.78) * g * 0.2;
+        c += vec3(1.0, 0.95, 0.85) * g * 0.15;
+        // Output sRGB directly (no tone mapping)
         gl_FragColor = vec4(c, 1.0);
       }`,
-  }));
+  });
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 32, 16), skyMat);
   dome.frustumCulled = false;
-  dome.renderOrder = -999; // Render first (before terrain)
+  dome.renderOrder = -999;
   scene.add(dome);
-  return { dome, fog: scene.fog };
+  
+  // Add white clouds
+  const clouds = addCloudsToSky(scene, new THREE.Vector3(0, 0, 0), 450000, 6);
+  
+  return { dome, clouds, fog: scene.fog };
 }
 
 // Vivid green alpine conifer (Zwift-style, not black silhouette)
