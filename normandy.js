@@ -497,10 +497,10 @@ export function addNormandyVegetation(scene, track, terrain, max = 9000) {
       v.set(it.x, it.y, it.z);
       im.setMatrixAt(i, m.compose(v, q, sc));
       
-      // Variation de couleur pour réalisme
-      const hue = 0.27 + (rand() - 0.5) * 0.06;
-      const sat = 0.30 + rand() * 0.15;
-      const light = 0.30 + rand() * 0.12;
+      // Vivid green variation (Zwift-style)
+      const hue = 0.28 + (rand() - 0.5) * 0.05;
+      const sat = 0.45 + rand() * 0.15;
+      const light = 0.38 + rand() * 0.12;
       col.setHSL(hue, sat, light);
       im.setColorAt(i, col);
     });
@@ -527,7 +527,7 @@ export function addNormandyVegetation(scene, track, terrain, max = 9000) {
   const oakMat = new THREE.MeshStandardMaterial({ roughness: 0.82, metalness: 0, envMapIntensity: 0.3 });
   const beechMat = new THREE.MeshStandardMaterial({ roughness: 0.80, metalness: 0, envMapIntensity: 0.3 });
   const appleMat = new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0, envMapIntensity: 0.25 });
-  const hedgeMat = new THREE.MeshStandardMaterial({ color: 0x486f38, roughness: 0.95, metalness: 0 });
+  const hedgeMat = new THREE.MeshStandardMaterial({ color: 0x5a8048, roughness: 0.90, metalness: 0 });
   
   instCol(createRealisticOak(), oakMat, oaks);
   instCol(createRealisticBeech(), beechMat, beeches);
