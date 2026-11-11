@@ -244,7 +244,7 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   // Light fog matched to horizon blue
   const base = opts.fogBase ?? 800, top = opts.fogTop ?? 1400;
   scene.fog = new THREE.Fog(horizonBlue, base, top);
-  scene.background = null; // Let sky dome show (not solid color)
+  scene.background = deepBlue; // Deep blue background (dome should render over this)
   
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
@@ -253,11 +253,12 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   sun.color.set(0xfff6e8); sun.intensity = 2.4;
   renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
   
-  // Deep blue sky dome (Zwift-style) - NO tone mapping, pure blue output
+  // Deep blue sky dome (Zwift-style) - NO tone mapping, NO fog, pure blue output
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, 
     depthWrite: false,
     depthTest: false,
+    fog: false, // Critical: no fog
     toneMapped: false, // Critical: bypass ACES tone mapping
     uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
     vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',

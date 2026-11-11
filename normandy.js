@@ -224,7 +224,7 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   const horizonBlue = new THREE.Color(0xc0ddf5);
   const deepBlue = new THREE.Color(0x1a66cc);
   
-  scene.background = null; // Let sky dome show (not solid color)
+  scene.background = deepBlue; // Deep blue background
   scene.fog = new THREE.Fog(horizonBlue, 1200, 2800); // Light fog matched to sky
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
@@ -250,11 +250,12 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   );
   scene.add(sunSphere);
   
-  // Deep blue sky dome (Zwift-style) - NO tone mapping
+  // Deep blue sky dome (Zwift-style) - NO tone mapping, NO fog
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     depthTest: false,
+    fog: false, // Critical: no fog
     toneMapped: false, // Critical: bypass ACES tone mapping
     uniforms: {
       uHorizon: { value: horizonBlue },
