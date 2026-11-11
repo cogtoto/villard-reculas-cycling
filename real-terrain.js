@@ -22,10 +22,16 @@ class TerrainChunk {
     const positions = geometry.attributes.position.array;
     
     // Apply elevation and scale to real-world size
+    // DEM format: "row 0 = north", so row 0 should be at -Z (north)
+    // PlaneGeometry: vertices go from front to back (increasing Z)
+    // So we need to flip the Y index when reading from DEM
     for (let y = 0; y < ny; y++) {
       for (let x = 0; x < nx; x++) {
         const srcX = x * skip;
-        const srcY = y * skip;
+        // Flip Y: geometry row 0 (front, -Z, north) should read from DEM row 0 (north)
+        // But PlaneGeometry V goes 0 (back/south) to 1 (front/north)
+        // So we need: srcY = (ny - 1 - y) * skip to flip it
+        const srcY = ((this.chunkMeta.chunkSizeY / skip) - 1 - y) * skip;
         const srcIdx = srcY * this.chunkMeta.chunkSizeX + srcX;
         const elevation = this.heightData[srcIdx];
         
@@ -47,11 +53,11 @@ class TerrainChunk {
     }
     
     // Material with real orthoimagery texture
-    // Use MeshBasicMaterial for debugging (doesn't need lights)
+    // Use MeshLambertMaterial for proper lighting with photo texture
     let material;
     if (this.orthoTexture) {
       console.log(`Chunk ${this.name} LOD${lodLevel}: Creating material with texture`, this.orthoTexture.image?.width, 'x', this.orthoTexture.image?.height);
-      material = new THREE.MeshBasicMaterial({
+      material = new THREE.MeshLambertMaterial({
         map: this.orthoTexture,
         side: THREE.FrontSide
       });
@@ -64,7 +70,7 @@ class TerrainChunk {
       console.warn(`Chunk ${this.name} LOD${lodLevel}: No texture! Using fallback color`);
       material = new THREE.MeshStandardMaterial({
         color: 0xff00ff, // Bright magenta to make it obvious
-        roughness: 0.9,
+        roughness: 1.0,
         metalness: 0.0
       });
     }
