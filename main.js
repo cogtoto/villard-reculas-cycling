@@ -15,6 +15,8 @@ import { buildTcx, saveFile, toLatLon } from './export.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
 import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
+import { graphicsSettings, fpsCounter } from './graphics-settings.js';
+import { setupLighting } from './sky-system.js';
 
 installHeightFog(); // avant toute compilation de shader
 
@@ -111,6 +113,13 @@ let rideStartTime = 0; // Wall clock time when ride actually started
     });
   });
   
+  // Graphics quality selector - set to current quality
+  const qualitySelect = document.getElementById('graphics-quality');
+  qualitySelect.value = graphicsSettings.quality;
+  qualitySelect.onchange = () => {
+    graphicsSettings.setQuality(qualitySelect.value);
+  };
+  
   document.getElementById('ride-go').onclick = () => {
     selectedRoute = document.querySelector('input[name="route"]:checked')?.value || 'villard';
     selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'free';
@@ -183,25 +192,22 @@ function formatRideTime(seconds) {
 // --- Scène ---
 const SKY = 0xa8d0f0;
 const scene = new THREE.Scene();
+
+// Placeholder fog and background (will be updated per route)
 scene.background = new THREE.Color(SKY);
 scene.fog = new THREE.Fog(SKY, 150, 1800);
 
-const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 60000);
+const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 1, 8000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xcfe4ff, 0x5a6a3a, 0.9));
-const sun = new THREE.DirectionalLight(0xfff4e0, 1.2);
-sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
-Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 200 });
-scene.add(sun, sun.target);
-const { sunDir } = setupSky(scene, renderer, sun);
-alpineAtmosphere(scene, renderer, sun, sunDir);
+// Apply graphics settings to renderer
+graphicsSettings.applyToRenderer(renderer);
+
+// Lighting will be set up per-route after quality/route selection
+let sun = null, sunDirection = null;
 let seaMat = null;
 let groundAt = null; // hauteur du terrain (anti-caméra dans la pente)
 let updateMinimap = null;
@@ -252,7 +258,18 @@ const shift = (d) => {
     }
   }
 };
-addEventListener('keydown', (e) => { if (e.key === '+' || e.key === 'ArrowUp' && e.shiftKey) shift(1); if (e.key === '-' || e.key === 'ArrowDown' && e.shiftKey) shift(-1); });
+addEventListener('keydown', (e) => { 
+  if (e.key === '+' || e.key === 'ArrowUp' && e.shiftKey) shift(1); 
+  if (e.key === '-' || e.key === 'ArrowDown' && e.shiftKey) shift(-1); 
+  // F key toggles FPS counter
+  if (e.key === 'f' || e.key === 'F') {
+    if (fpsCounter.element) {
+      fpsCounter.hide();
+    } else {
+      fpsCounter.show();
+    }
+  }
+});
 const sensors = createSensors((msg) => {
     state = { ...state, ...msg };
     hud.watts.textContent = Math.round(state.watts);
@@ -567,11 +584,17 @@ function tick() {
     }
     camera.position.copy(camPos);
     camera.lookAt(ahead.x, ahead.y + 1, ahead.z);
-    sun.position.set(pos.x + sunDir.x * 100, pos.y + sunDir.y * 100, pos.z + sunDir.z * 100);
-    sun.target.position.set(pos.x, pos.y, pos.z);
+    if (sun && sunDirection) {
+      sun.position.set(pos.x + sunDirection.x * 100, pos.y + sunDirection.y * 100, pos.z + sunDirection.z * 100);
+      sun.target.position.set(pos.x, pos.y, pos.z);
+    }
   }
   if (seaMat) seaMat.uniforms.uTime.value = clock.elapsedTime;
   renderer.render(scene, camera);
+  
+  // Update FPS counter if visible
+  fpsCounter.update();
+  
   requestAnimationFrame(tick);
 }
 
@@ -612,10 +635,27 @@ function loadRoute() {
       const dem = { meta: demMeta, data: new Int16Array(demBuf) };
       track = buildTrack(parseGpx(txt), 1200);
       console.log(`GPX ${selectedRoute}: ${track.rawCount} raw pts → ${track.pts.length} pts, ${(track.length / 1000).toFixed(2)} km`);
+      
+      // Setup lighting based on quality and route type
+      const preset = graphicsSettings.getPreset();
+      const lighting = setupLighting(scene, renderer, preset.skyType, selectedRoute);
+      sun = lighting.sun;
+      sunDirection = lighting.sunDirection;
+      
+      // Setup fog based on route and quality
+      const fogSettings = graphicsSettings.getFogSettings(selectedRoute);
+      scene.fog = new THREE.Fog(fogSettings.color, fogSettings.near, fogSettings.far);
+      if (!scene.background || scene.background.isColor) {
+        scene.background = fogSettings.color;
+      }
+      
+      // Update camera far plane
+      camera.far = graphicsSettings.getCameraFar();
+      camera.updateProjectionMatrix();
+      
       const terrain = route.setupTerrain(scene, track, dem);
       buildRoad(scene, track, 4, terrain);
       groundAt = terrain.heightAt;
-      route.setupAtmosphere(scene, renderer, sun, sunDir);
       updateMinimap = createMinimap(track, 200, terrain.classify, teleportTo, route.zoneColors);
       minimapCanvas = updateMinimap.canvas; // Store reference for show/hide
       

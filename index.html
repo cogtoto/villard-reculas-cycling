@@ -117,7 +117,7 @@
       </div>
     </div>
     
-    <div id="hint">Real GPS routes · Mock data by default · BLE when FTMS/Power sensor found · +/− = virtual gears (trainer resistance)</div>
+    <div id="hint">Real GPS routes · Mock data by default · BLE when FTMS/Power sensor found · +/− = virtual gears (trainer resistance) · F = FPS counter · Source: IGN</div>
     <script type="module" src="/main.js"></script>
       <div id="shift-pad">
       <button id="shift-up" aria-label="Gear up">+</button>
@@ -168,6 +168,17 @@
       <h2 style="margin:0 0 10px">Welcome!</h2>
       <p style="margin:0 0 12px">Enter your FTP (Functional Threshold Power) so power zones match your fitness.</p>
       <label>Your FTP: <input id="ftp-input" type="number" min="50" max="600" step="1" style="width:90px;font-size:18px;padding:4px 6px;border-radius:6px;border:0"> W</label>
+      
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #364a5e">
+        <label style="display:block;margin-bottom:8px;font-size:15px">Graphics Quality:</label>
+        <select id="graphics-quality" style="width:100%;font-size:15px;padding:6px;border-radius:6px;border:0;background:#263847;color:#fff">
+          <option value="low">Low (mobile/weak GPU)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High (HDRI sky, high detail)</option>
+        </select>
+        <div style="margin-top:6px;font-size:13px;opacity:0.7">Auto-detected quality will be set if not changed</div>
+      </div>
+      
       <div style="margin-top:16px;text-align:right"><button id="ftp-ok" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#2e86de;color:#fff;font-weight:700">Continue</button></div>
     </div>
     <div id="mode-step" style="display:none">
