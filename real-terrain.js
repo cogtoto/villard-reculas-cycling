@@ -39,12 +39,35 @@ class TerrainChunk {
     geometry.computeVertexNormals();
     geometry.computeBoundingBox();
     
+    // DEBUG: Check UV attribute
+    if (!geometry.attributes.uv) {
+      console.warn('Terrain geometry missing UV attribute!');
+    } else {
+      console.log(`Chunk ${this.name} LOD${lodLevel}: UVs present, ${geometry.attributes.uv.count} points`);
+    }
+    
     // Material with real orthoimagery texture
-    const material = new THREE.MeshStandardMaterial({
-      map: this.orthoTexture,
-      roughness: 0.9,
-      metalness: 0.0
-    });
+    // Use MeshBasicMaterial for debugging (doesn't need lights)
+    let material;
+    if (this.orthoTexture) {
+      console.log(`Chunk ${this.name} LOD${lodLevel}: Creating material with texture`, this.orthoTexture.image?.width, 'x', this.orthoTexture.image?.height);
+      material = new THREE.MeshBasicMaterial({
+        map: this.orthoTexture,
+        side: THREE.FrontSide
+      });
+      // Force texture update
+      if (this.orthoTexture.image) {
+        this.orthoTexture.needsUpdate = true;
+      }
+      console.log(`Material map set:`, material.map !== null, 'needsUpdate:', this.orthoTexture.needsUpdate);
+    } else {
+      console.warn(`Chunk ${this.name} LOD${lodLevel}: No texture! Using fallback color`);
+      material = new THREE.MeshStandardMaterial({
+        color: 0xff00ff, // Bright magenta to make it obvious
+        roughness: 0.9,
+        metalness: 0.0
+      });
+    }
     
     // If ortho texture is available, use it; otherwise fallback to vertex colors
     if (!this.orthoTexture) {
@@ -120,24 +143,33 @@ export class RealTerrainSystem {
       const texturePromises = this.metadata.orthoimagery.map(ortho => {
         return new Promise((resolve) => {
           const texturePath = `${basePath}/${ortho.file}`;
+          console.log(`  Loading texture from: ${texturePath}`);
+          
           textureLoader.load(
             texturePath,
             (texture) => {
+              console.log(`  ✓ Texture loaded: ${ortho.file}, image: ${texture.image?.width}×${texture.image?.height}`);
+              
               texture.colorSpace = THREE.SRGBColorSpace;
               texture.wrapS = THREE.ClampToEdgeWrapping;
               texture.wrapT = THREE.ClampToEdgeWrapping;
               texture.minFilter = THREE.LinearMipmapLinearFilter;
               texture.magFilter = THREE.LinearFilter;
               texture.generateMipmaps = true;
+              texture.needsUpdate = true;
               
               const name = ortho.file.replace('ortho-', '').replace('.webp', '');
               orthoTextures[name] = texture;
-              console.log(`  ✓ Loaded texture ${name}`);
+              console.log(`  ✓ Stored texture as '${name}'`);
               resolve();
             },
-            undefined,
+            (progress) => {
+              if (progress.lengthComputable) {
+                console.log(`  Progress ${ortho.file}: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
+              }
+            },
             (err) => {
-              console.warn(`  ✗ Failed to load ${ortho.file}:`, err);
+              console.error(`  ✗ Failed to load ${ortho.file}:`, err);
               resolve();
             }
           );
@@ -145,6 +177,7 @@ export class RealTerrainSystem {
       });
       
       await Promise.all(texturePromises);
+      console.log('All textures loaded:', Object.keys(orthoTextures));
     }
     
     // Load all chunks with textures

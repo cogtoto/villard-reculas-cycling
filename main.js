@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { parseGpx, buildTrack, sampleTrack } from './gpx.js';
 import { stepSpeed } from './physics.js';
+
+// Expose THREE for debug tools
+window.THREE = THREE;
 import { createMinimap } from './minimap.js';
 import { setupSky, addClouds, buildRoad } from './decor.js';
 import { addChalets } from './chalets.js';
@@ -709,7 +712,7 @@ function loadRoute() {
         terrain = route.setupTerrain(scene, track, dem);
       }
       
-      buildRoad(scene, track, 4, terrain);
+      buildRoad(scene, track, 4, terrain, !!route.realTerrain);
       groundAt = terrain.heightAt;
       
       // Create minimap (works with real or procedural terrain)

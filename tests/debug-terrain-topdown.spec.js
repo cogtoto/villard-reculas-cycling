@@ -24,10 +24,10 @@ test.describe('Debug Terrain Top-Down View', () => {
     // Wait for terrain to load
     await page.waitForTimeout(5000);
     
-    // Switch to orthographic top-down view
+    // Switch to orthographic top-down view and draw GPX track
     await page.evaluate(() => {
-      // Get camera and terrain info
-      const camera = window.camera;
+      const scene = window.scene;
+      const track = window.track;
       const realTerrain = window._realTerrain;
       
       if (!realTerrain || !realTerrain.loaded) {
@@ -40,18 +40,49 @@ test.describe('Debug Terrain Top-Down View', () => {
       const centerLat = (meta.bbox.minLat + meta.bbox.maxLat) / 2;
       const centerLon = (meta.bbox.minLon + meta.bbox.maxLon) / 2;
       
-      // Convert to local coords using GPX origin
       const R = 6371000;
       const origin = realTerrain.gpxOrigin;
       const k = Math.cos((origin.lat0 * Math.PI) / 180);
       const centerX = ((centerLon - origin.lon0) * Math.PI / 180) * R * k;
       const centerZ = -((centerLat - origin.lat0) * Math.PI / 180) * R;
       
-      console.log('Terrain center local coords:', centerX, centerZ);
-      console.log('Terrain bbox:', meta.bbox);
-      console.log('GPX origin:', origin);
+      console.log('Terrain center:', centerX, centerZ);
       
-      // Switch to orthographic camera
+      // Make all terrain chunks visible for top-down view
+      if (realTerrain.chunks) {
+        for (const [name, chunk] of realTerrain.chunks.entries()) {
+          if (chunk.meshes.lod0) {
+            chunk.meshes.lod0.visible = true;
+          }
+          if (chunk.meshes.lod1) {
+            chunk.meshes.lod1.visible = false;
+          }
+        }
+      }
+      
+      // Import THREE from window (already loaded by main.js)
+      const THREE = window.THREE;
+      if (!THREE) {
+        console.error('THREE.js not available');
+        return;
+      }
+      
+      // Draw GPX track as red line
+      if (track && track.pts) {
+        const points = track.pts.map(p => new THREE.Vector3(p.x, p.y + 10, p.z));
+        const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        const material = new THREE.LineBasicMaterial({ 
+          color: 0xff0000, 
+          linewidth: 3,
+          depthTest: false
+        });
+        const line = new THREE.Line(geometry, material);
+        line.renderOrder = 999;
+        scene.add(line);
+        console.log('Added red GPX track line');
+      }
+      
+      // Create true orthographic top-down camera
       const aspect = window.innerWidth / window.innerHeight;
       const size = 8000; // Show ±8km
       const ortho = new THREE.OrthographicCamera(
@@ -60,28 +91,17 @@ test.describe('Debug Terrain Top-Down View', () => {
         1, 20000
       );
       
-      // Position camera looking straight down
-      ortho.position.set(centerX, 5000, centerZ);
+      // Position DIRECTLY above looking DOWN (-Y axis)
+      ortho.position.set(centerX, 10000, centerZ);
+      ortho.up.set(0, 0, -1); // Set up vector to point north (-Z)
       ortho.lookAt(centerX, 0, centerZ);
       ortho.updateProjectionMatrix();
       
-      // Replace camera
       window.camera = ortho;
       
-      console.log('Switched to orthographic top-down view');
+      console.log('Switched to TRUE top-down orthographic view');
       console.log('Camera position:', ortho.position);
-      
-      // Log visible terrain chunks
-      if (realTerrain.chunks) {
-        for (const [name, chunk] of realTerrain.chunks.entries()) {
-          if (chunk.meshes.lod0) {
-            console.log(`Chunk ${name} LOD0: pos (${chunk.meshes.lod0.position.x.toFixed(0)}, ${chunk.meshes.lod0.position.z.toFixed(0)}), visible: ${chunk.meshes.lod0.visible}`);
-          }
-          if (chunk.meshes.lod1) {
-            console.log(`Chunk ${name} LOD1: pos (${chunk.meshes.lod1.position.x.toFixed(0)}, ${chunk.meshes.lod1.position.z.toFixed(0)}), visible: ${chunk.meshes.lod1.visible}`);
-          }
-        }
-      }
+      console.log('Camera looking at:', centerX, 0, centerZ);
     });
     
     await page.waitForTimeout(1000);
