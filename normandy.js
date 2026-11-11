@@ -243,11 +243,11 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   );
   scene.add(sunSphere);
   
-  // Deep blue sky dome (Zwift-style)
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 48, 24), new THREE.ShaderMaterial({
+  // Deep blue sky dome (Zwift-style) - render first, no depth test
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 48, 24), new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    fog: false,
+    depthTest: false, // Always render behind everything
     uniforms: {
       uHorizon: { value: horizonBlue },
       uMid: { value: new THREE.Color(0x5599dd) },
@@ -258,8 +258,7 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
       varying vec3 vDir;
       void main() {
         vDir = normalize(position);
-        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        gl_Position = p.xyww;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
       }
     `,
     fragmentShader: `
@@ -267,33 +266,27 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
       varying vec3 vDir;
       
       void main() {
-        float h = max(vDir.y, 0.0);
+        float h = clamp(vDir.y, 0.0, 1.0);
         
-        // Gradient trois couches pour réalisme
+        // Deep blue gradient (Zwift-style)
         vec3 c;
-        if (h < 0.3) {
-          c = mix(uHorizon, uMid, h / 0.3);
+        if (h < 0.25) {
+          c = mix(uHorizon, uMid, h / 0.25);
         } else {
-          c = mix(uMid, uTop, (h - 0.3) / 0.7);
+          c = mix(uMid, uTop, (h - 0.25) / 0.75);
         }
         
-        // Halo solaire subtil
+        // Halo solaire
         float sunDot = max(dot(normalize(vDir), normalize(uSun)), 0.0);
-        float sunGlow = pow(sunDot, 16.0) * 0.3 + pow(sunDot, 4.0) * 0.15;
+        float sunGlow = pow(sunDot, 16.0) * 0.25 + pow(sunDot, 4.0) * 0.12;
         c += vec3(1.0, 0.98, 0.9) * sunGlow;
         
-        // Diffusion atmosphérique
-        float scatter = pow(1.0 - abs(vDir.y), 2.0) * 0.08;
-        c = mix(c, uHorizon, scatter);
-        
         gl_FragColor = vec4(c, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
       }
     `,
   }));
   dome.frustumCulled = false;
-  dome.renderOrder = -1;
+  dome.renderOrder = -999; // Render first (before terrain)
   scene.add(dome);
   
   // Balanced ambient light for good visibility

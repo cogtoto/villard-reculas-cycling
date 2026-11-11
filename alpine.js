@@ -246,20 +246,24 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   sun.color.set(0xfff6e8); sun.intensity = 2.4;
   renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
   
-  // Deep blue sky dome (Zwift-style)
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 32, 16), new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
+  // Deep blue sky dome (Zwift-style) - render first, no depth write
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 32, 16), new THREE.ShaderMaterial({
+    side: THREE.BackSide, 
+    depthWrite: false,
+    depthTest: false, // Always render behind everything
     uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
-    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
+    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
     fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
-      void main(){ float h = max(vD.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.4));
-        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0); c += vec3(1.0, 0.92, 0.78) * g * 0.25;
+      void main(){ 
+        float h = clamp(vD.y, 0.0, 1.0);
+        vec3 c = mix(uHor, uTop, pow(h, 0.35)); // Stronger gradient for deeper blue at top
+        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0);
+        c += vec3(1.0, 0.92, 0.78) * g * 0.2;
         gl_FragColor = vec4(c, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
       }`,
   }));
-  dome.frustumCulled = false; dome.renderOrder = -1;
+  dome.frustumCulled = false;
+  dome.renderOrder = -999; // Render first (before terrain)
   scene.add(dome);
   return { dome, fog: scene.fog };
 }

@@ -117,6 +117,7 @@ export function setupLighting(scene, renderer, quality, routeType) {
   sun.shadow.camera.bottom = -60;
   
   scene.add(sun);
+  scene.add(sun.target); // Target must be in scene for shadow camera to work
   
   // Bright hemisphere light for fill (vivid colors)
   const skyColor = 0x87CEEB;  // Vivid sky blue
