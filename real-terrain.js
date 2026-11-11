@@ -44,6 +44,7 @@ class TerrainChunk {
     
     geometry.computeVertexNormals();
     geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
     
     // DEBUG: Check UV attribute
     if (!geometry.attributes.uv) {
@@ -297,40 +298,73 @@ export class RealTerrainSystem {
     }
   }
   
-  // Get height at world position (for road flattening and collision)
+  // Get height at world position with bilinear interpolation (for camera, rider, road)
   getHeightAt(worldX, worldZ) {
     if (!this.loaded) return 0;
     
-    // Convert world position to lat/lon grid coordinates
-    const latSpan = this.metadata.bbox.maxLat - this.metadata.bbox.minLat;
-    const lonSpan = this.metadata.bbox.maxLon - this.metadata.bbox.minLon;
+    // World coordinates are relative to GPX origin (lat0, lon0)
+    // Each chunk is chunkSizeX × chunkSizeY meters
+    const chunkSizeX = this.metadata.chunks.chunkSizeX;
+    const chunkSizeY = this.metadata.chunks.chunkSizeY;
+    const realSizeX = this.metadata.chunks.realSizeX;
+    const realSizeZ = this.metadata.chunks.realSizeZ;
     
-    // Determine which chunk
-    const chunkSizeX = lonSpan * 76000 / 4; // 2x2 chunks
-    const chunkSizeZ = latSpan * 111000 / 4;
+    // Determine which chunk based on world position
+    // Chunks are arranged: nw (x<0, z<0), ne (x>=0, z<0), sw (x<0, z>=0), se (x>=0, z>=0)
+    let chunkName;
+    if (worldZ < 0) {
+      chunkName = worldX < 0 ? 'nw' : 'ne';
+    } else {
+      chunkName = worldX < 0 ? 'sw' : 'se';
+    }
     
-    const chunkX = worldX >= 0 ? 1 : 0; // 0 = west, 1 = east
-    const chunkZ = worldZ >= 0 ? 1 : 0; // 0 = north, 1 = south
-    
-    const chunkNames = [
-      ['nw', 'ne'],
-      ['sw', 'se']
-    ];
-    
-    const chunkName = chunkNames[chunkZ][chunkX];
     const chunk = this.chunks.get(chunkName);
+    if (!chunk) {
+      console.warn(`Chunk ${chunkName} not found for position (${worldX.toFixed(1)}, ${worldZ.toFixed(1)})`);
+      return 0;
+    }
     
-    if (!chunk) return 0;
+    // Convert world position to chunk-local grid coordinates
+    // Each chunk mesh is centered at its chunk center
+    const chunkCenterX = this.metadata.chunks[chunkName].centerX;
+    const chunkCenterZ = this.metadata.chunks[chunkName].centerZ;
     
-    // Sample height from chunk data (bilinear interpolation would be better)
-    const localX = ((worldX + chunkSizeX * 2) % (chunkSizeX * 2)) / (chunkSizeX * 2);
-    const localZ = ((worldZ + chunkSizeZ * 2) % (chunkSizeZ * 2)) / (chunkSizeZ * 2);
+    // Local position within chunk mesh (-realSizeX/2 to +realSizeX/2)
+    const localX = worldX - chunkCenterX;
+    const localZ = worldZ - chunkCenterZ;
     
-    const gridX = Math.floor(localX * this.metadata.chunks.chunkSizeX);
-    const gridZ = Math.floor(localZ * this.metadata.chunks.chunkSizeY);
+    // Convert to grid coordinates (0 to chunkSizeX-1, 0 to chunkSizeY-1)
+    const gridX = (localX / realSizeX + 0.5) * chunkSizeX;
+    const gridZ = (localZ / realSizeZ + 0.5) * chunkSizeY;
     
-    const idx = gridZ * this.metadata.chunks.chunkSizeX + gridX;
+    // Bilinear interpolation
+    const x0 = Math.floor(gridX);
+    const z0 = Math.floor(gridZ);
+    const x1 = Math.min(x0 + 1, chunkSizeX - 1);
+    const z1 = Math.min(z0 + 1, chunkSizeY - 1);
     
-    return chunk.heightData[idx] || 0;
+    const fx = gridX - x0;
+    const fz = gridZ - z0;
+    
+    // Clamp to valid range
+    const x0c = Math.max(0, Math.min(x0, chunkSizeX - 1));
+    const x1c = Math.max(0, Math.min(x1, chunkSizeX - 1));
+    const z0c = Math.max(0, Math.min(z0, chunkSizeY - 1));
+    const z1c = Math.max(0, Math.min(z1, chunkSizeY - 1));
+    
+    const h00 = chunk.heightData[z0c * chunkSizeX + x0c] || 0;
+    const h10 = chunk.heightData[z0c * chunkSizeX + x1c] || 0;
+    const h01 = chunk.heightData[z1c * chunkSizeX + x0c] || 0;
+    const h11 = chunk.heightData[z1c * chunkSizeX + x1c] || 0;
+    
+    const h0 = h00 * (1 - fx) + h10 * fx;
+    const h1 = h01 * (1 - fx) + h11 * fx;
+    
+    return h0 * (1 - fz) + h1 * fz;
+  }
+  
+  // Alias for compatibility with procedural terrain
+  heightAt(x, z) {
+    return this.getHeightAt(x, z);
   }
 }

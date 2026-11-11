@@ -31,7 +31,7 @@ const ROUTES = {
     description: 'descent + climb',
     gpx: '/villard-reculas.gpx',
     dem: { meta: '/dem-villard.json', bin: '/dem-villard.bin' },
-    realTerrain: '/terrain/villard', // Use real terrain chunks
+    // realTerrain: '/terrain/villard', // DISABLED: Use procedural terrain instead
     setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
     setupAtmosphere: (scene, renderer, sun, sunDir) => alpineAtmosphere(scene, renderer, sun, sunDir),
     setupDecor: (scene, track, terrain) => {
@@ -596,11 +596,6 @@ function tick() {
   }
   if (seaMat) seaMat.uniforms.uTime.value = clock.elapsedTime;
   
-  // Update real terrain LOD if loaded
-  if (window._realTerrain && window._realTerrain.loaded) {
-    window._realTerrain.updateLOD(camera.position, graphicsSettings.quality);
-  }
-  
   renderer.render(scene, camera);
   
   // Update FPS counter if visible
@@ -664,55 +659,10 @@ function loadRoute() {
       camera.far = graphicsSettings.getCameraFar();
       camera.updateProjectionMatrix();
       
-      // Use real terrain if available (all quality levels)
-      let terrain;
-      if (route.realTerrain) {
-        console.log('Loading real terrain from:', route.realTerrain);
-        console.log('Track origin:', track.origin);
-        
-        // Pass quality and GPX origin to terrain system
-        window._terrainQuality = graphicsSettings.quality;
-        const realTerrainSystem = new RealTerrainSystem();
-        realTerrainSystem.load(scene, route.realTerrain, track.origin).then(() => {
-          console.log('Real terrain loaded and rendered');
-          // Store for LOD updates
-          window._realTerrain = realTerrainSystem;
-        }).catch(err => {
-          console.warn('Real terrain failed, using fallback:', err);
-          // Fallback to procedural
-          terrain = route.setupTerrain(scene, track, dem);
-          buildRoad(scene, track, 4, terrain);
-          groundAt = terrain.heightAt;
-        });
-        
-        // DON'T build procedural terrain when using real terrain
-        // Create minimal terrain stub for road collision
-        terrain = {
-          center: { x: 0, y: 0, z: 0 },
-          span: 20000,
-          heightAt: (x, z) => {
-            // Return track elevation at nearest point
-            let minDist = Infinity;
-            let nearestY = 0;
-            for (const pt of track.pts) {
-              const d = Math.hypot(pt.x - x, pt.z - z);
-              if (d < minDist) {
-                minDist = d;
-                nearestY = pt.y;
-              }
-            }
-            return nearestY;
-          }
-        };
-        
-        // Don't call setupTerrain or add procedural decor
-        // Skip setupDecor that adds trees/chalets on procedural terrain
-      } else {
-        // Use procedural terrain
-        terrain = route.setupTerrain(scene, track, dem);
-      }
+      // Use procedural terrain (real terrain disabled for now)
+      const terrain = route.setupTerrain(scene, track, dem);
       
-      buildRoad(scene, track, 4, terrain, !!route.realTerrain);
+      buildRoad(scene, track, 4, terrain, false);
       groundAt = terrain.heightAt;
       
       // Create minimap (works with real or procedural terrain)

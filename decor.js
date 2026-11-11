@@ -401,8 +401,13 @@ export function buildRoad(scene, track, width = 4, terrain = null, useRealTerrai
     const img = g.createImageData(s, s);
     for (let i = 0; i < s * s; i++) {
       const x = i % s, y = (i / s) | 0;
-      const v = 52 + fbm(x * 0.05, y * 0.05) * 16 + Math.random() * 12 + (Math.random() < 0.01 ? 30 : 0);
-      img.data.set([v, v + 2, v + 6, 255], i * 4);
+      // Realistic asphalt: dark grey base with aggregate variation and weathering
+      const aggregate = fbm(x * 0.08, y * 0.08) * 18;
+      const wear = fbm(x * 0.02, y * 0.02) * 10; // Macro weathering patches
+      const gravel = (Math.random() < 0.015 ? 25 : 0); // Small bright aggregate stones
+      const v = 48 + aggregate + wear + gravel + Math.random() * 8;
+      // Slight warm tint (aged asphalt)
+      img.data.set([v, v + 1, v + 3, 255], i * 4);
     }
     g.putImageData(img, 0, 0);
   });
@@ -429,18 +434,13 @@ export function buildRoad(scene, track, width = 4, terrain = null, useRealTerrai
   const road = new THREE.Mesh(ribbon(h, -h, 0.2, 6), new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.92, metalness: 0, side, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
   road.receiveShadow = true; road.frustumCulled = false; scene.add(road);
   
-  // Skip grey shoulders (skirts) when using real terrain
+  // Grass verges (no grey shoulders, no white edge lines per user preference)
   if (!useRealTerrain) {
-    const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a8f7a, roughness: 1, side, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-    scene.add(new THREE.Mesh(ribbon(h + 0.8, h, 0.3, 6), shoulderMat), new THREE.Mesh(ribbon(-h, -h - 0.8, 0.3, 6), shoulderMat));
+    const vergeMat = new THREE.MeshStandardMaterial({ color: 0x7c8a50, roughness: 1, side, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+    scene.add(new THREE.Mesh(ribbon(h + 0.6, h, 0.05, 6), vergeMat), new THREE.Mesh(ribbon(-h, -h - 0.6, 0.05, 6), vergeMat));
   }
   
-  // White road markings
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x555555, roughness: 0.6, side, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-  scene.add(new THREE.Mesh(ribbon(h - 0.15, h - 0.3, 0.23, 6), lineMat), new THREE.Mesh(ribbon(-h + 0.3, -h + 0.15, 0.23, 6), lineMat));
-  const dash = canvasTex(64, (g, s) => { g.clearRect(0, 0, s, s); g.fillStyle = '#f0f0e8'; g.fillRect(0, 0, s, s * 0.4); });
-  dash.colorSpace = THREE.SRGBColorSpace;
-  // (pas d'axe central pointillé : route de montagne étroite, comme sur place)
+  // NO road markings (no center line, no edge lines per user preference for alpine roads)
 }
 
 

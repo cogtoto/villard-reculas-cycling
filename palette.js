@@ -1,14 +1,14 @@
-// Palette alpine centralisée (Villard-Reculas / Oisans) — point d'entrée unique pour caler les couleurs
-// sur des références photo (Street View). Modifier ici : terrain, chalets, route.
+// Palette alpine centralisée (Villard-Reculas / Oisans) — couleurs inspirées des photos aériennes IGN
+// Échantillonnage des ortho-*.webp : prés vert-jaune, forêts sombres, roches grises, neige blanche
 export const PALETTE = {
   terrain: {
-    meadow: 0x6f9a45, meadow2: 0x8fae55,   // prés verts d'été
-    forest: 0x2f4f2c, forest2: 0x41613a,   // sous-bois de résineux
-    rock: 0x8a857c, rock2: 0x3a3d42,       // calcaire / coupes de roche sombres
-    snow: 0xf3f6fa, snowShade: 0xd6dde8,
-    water: 0x4f7b84, water2: 0x34585f,     // lac du Verney (Street View)
-    shore: 0x8a8c88,                       // bande de gravier (marnage)
-    village: 0x9c9a70,
+    meadow: 0x7a9f4a, meadow2: 0x92b060,   // prés alpins (vert-jaune d'été, échantillonné IGN)
+    forest: 0x2d4428, forest2: 0x3f5838,   // forêts de conifères sombres (épicéas/mélèzes)
+    rock: 0x8c8780, rock2: 0x5a5c58,       // roches calcaires/schiste (gris moyen à sombre)
+    snow: 0xf4f7fb, snowShade: 0xd8e0ea,   // neige avec ombres bleutées
+    water: 0x4d7a83, water2: 0x365860,     // lac du Verney (bleu-vert foncé)
+    shore: 0x8b8d89,                       // gravier/marnage (gris neutre)
+    village: 0xa09b72,                     // terre/chemins de village (ocre-gris)
   },
   chalet: {
     woodTints: [0xa8672f, 0x5a3a22, 0x8a5530, 0xb07a45], // bois miel / brun (texture madriers neutre × teinte)

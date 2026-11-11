@@ -19,45 +19,65 @@ function canvasTex(size, draw) {
   return t;
 }
 
-// Warm wood texture (horizontal planks)
+// Warm wood texture (horizontal madriers / weathered planks, Oisans style)
 const woodTex = () => canvasTex(256, (g, S) => {
-  g.fillStyle = '#b8956a';
+  g.fillStyle = '#a87d52';
   g.fillRect(0, 0, S, S);
-  for (let y = 0; y < S; y += 20) {
-    const shade = 180 + rand() * 40;
-    g.fillStyle = `rgb(${shade}, ${shade * 0.85}, ${shade * 0.7})`;
-    g.fillRect(0, y, S, 18);
-    g.fillStyle = 'rgba(50, 30, 15, 0.3)';
-    g.fillRect(0, y + 18, S, 2);
+  // Horizontal plank logs
+  for (let y = 0; y < S; y += 18) {
+    const shade = 150 + rand() * 50;
+    // Warm honey to brown tones
+    const r = shade * 1.1, gv = shade * 0.88, b = shade * 0.65;
+    g.fillStyle = `rgb(${r}, ${gv}, ${b})`;
+    g.fillRect(0, y, S, 16);
+    // Wood grain lines
+    for (let x = 0; x < S; x += 8 + rand() * 16) {
+      g.fillStyle = `rgba(80, 50, 30, ${0.15 + rand() * 0.1})`;
+      g.fillRect(x, y + 2, 2 + rand() * 3, 12);
+    }
+    // Plank gap (dark shadow)
+    g.fillStyle = 'rgba(40, 25, 15, 0.5)';
+    g.fillRect(0, y + 16, S, 2);
   }
 });
 
-// Stone/white render texture
+// Stone base texture (rough fieldstone / rendered masonry, Oisans style)
 const stoneTex = () => canvasTex(256, (g, S) => {
-  g.fillStyle = '#e8e4dc';
+  // Base render (light beige-grey)
+  g.fillStyle = '#d8cfc5';
   g.fillRect(0, 0, S, S);
-  for (let k = 0; k < 80; k++) {
+  // Fieldstone blocks (irregular)
+  for (let k = 0; k < 90; k++) {
     const x = rand() * S, y = rand() * S;
-    const w = 10 + rand() * 20, h = 8 + rand() * 12;
-    const v = 200 + rand() * 40;
-    g.fillStyle = `rgb(${v}, ${v * 0.98}, ${v * 0.95})`;
+    const w = 15 + rand() * 30, h = 10 + rand() * 16;
+    const v = 170 + rand() * 50;
+    // Grey-brown stone variations
+    const r = v, gv = v * 0.96, b = v * 0.92;
+    g.fillStyle = `rgb(${r}, ${gv}, ${b})`;
     g.fillRect(x, y, w, h);
-    g.strokeStyle = 'rgba(100, 95, 85, 0.3)';
-    g.lineWidth = 1;
+    // Mortar lines (darker)
+    g.strokeStyle = 'rgba(90, 85, 75, 0.4)';
+    g.lineWidth = 2;
     g.strokeRect(x, y, w, h);
   }
 });
 
-// Dark roof texture (slate/shingles)
+// Dark roof texture (lauzes / slate tiles, Oisans traditional style)
 const roofTex = () => canvasTex(256, (g, S) => {
-  g.fillStyle = '#3a3a3c';
+  g.fillStyle = '#2f3034';
   g.fillRect(0, 0, S, S);
-  const rowH = 16;
+  const rowH = 14;
+  // Staggered stone slate rows
   for (let r = 0; r < S / rowH; r++) {
-    for (let x = -(r % 2) * 10; x < S; x += 20) {
-      const v = 50 + rand() * 30;
-      g.fillStyle = `rgb(${v}, ${v}, ${v + 5})`;
-      g.fillRect(x + 1, r * rowH, 18, rowH - 2);
+    const offset = (r % 2) * 12;
+    for (let x = -offset; x < S; x += 24) {
+      const v = 42 + rand() * 28;
+      // Dark grey-blue slate
+      g.fillStyle = `rgb(${v}, ${v}, ${v + 6})`;
+      g.fillRect(x + 1, r * rowH, 22, rowH - 1);
+      // Slight shadow between tiles
+      g.fillStyle = 'rgba(0, 0, 0, 0.2)';
+      g.fillRect(x, r * rowH + rowH - 1, 24, 1);
     }
   }
 });

@@ -129,15 +129,24 @@ export function buildAlpineTerrain(scene, track, dem) {
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   for (let j = 0; j < FZ; j++) for (let i = 0; i < FX; i++) {
     const x = x0 + (i + 0.5) * PX, z = z0 + (j + 0.5) * PX, k = classify(x, z), r = hash(i, j), n = fbm(x * 0.004, z * 0.004, 3);
+    // Micro-detail noise for grass/rock texture (high frequency)
+    const microGrass = fbm(x * 0.15, z * 0.15, 2) * 0.15;
+    const microRock = fbm(x * 0.08, z * 0.08, 3) * 0.2 + hash(i * 7, j * 11) * 0.1;
+    
     let col;
     if (k === 'water') col = mix(COL.water, COL.water2, r * 0.3);
-    else if (k === 'shore') col = mix(COL.shore, COL.rock, r * 0.4);
-    else if (k === 'snow') col = mix(COL.snow, COL.snowShade, r * 0.5 + n * 0.3); // blanc bleuté, légères ombres
-    else if (k === 'rock') col = mix(COL.rock, COL.rock2, n);
-    else if (k === 'forest') col = mix(COL.forest, COL.forest2, r * 0.6);
-    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5);
-    else { const y = heightAt(x, z); col = mix(COL.meadow, COL.meadow2, Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600))); }
-    const v = 0.9 + r * 0.14, o = (j * FX + i) * 4;
+    else if (k === 'shore') col = mix(COL.shore, COL.rock, r * 0.4 + microRock);
+    else if (k === 'snow') col = mix(COL.snow, COL.snowShade, r * 0.5 + n * 0.3); // white-blue, slight shadows
+    else if (k === 'rock') col = mix(COL.rock, COL.rock2, n * 0.7 + microRock * 0.3);
+    else if (k === 'forest') col = mix(COL.forest, COL.forest2, r * 0.6 + microGrass * 0.4);
+    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5 + microGrass * 0.3);
+    else { 
+      // Meadow: blend with altitude and add grass texture detail
+      const y = heightAt(x, z); 
+      const altBlend = Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600));
+      col = mix(COL.meadow, COL.meadow2, altBlend + microGrass * 0.3); 
+    }
+    const v = 0.88 + r * 0.18, o = (j * FX + i) * 4;
     D[o] = Math.min(255, col[0] * v); D[o + 1] = Math.min(255, col[1] * v); D[o + 2] = Math.min(255, col[2] * v); D[o + 3] = 255;
   }
   g2.putImageData(img, 0, 0);
@@ -247,20 +256,57 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   return { dome, fog: scene.fog };
 }
 
-// Conifère "blob" comme ForestGenerator (icosaèdre effilé, normales douces, ombre interne → pointe éclairée)
+// Realistic multi-tier spruce tree (alpine conifer with distinct branch tiers)
 function conifer() {
-  const g = new THREE.IcosahedronGeometry(1, 1);
-  const p = g.attributes.position, n = g.attributes.normal, col = new Float32Array(p.count * 3);
-  const deep = new THREE.Color(0x1d3318), bright = new THREE.Color(0x5d7a37), t = new THREE.Color();
-  for (let i = 0; i < p.count; i++) {
-    const ux = p.getX(i), uy = p.getY(i), uz = p.getZ(i), h = (uy + 1) / 2;
-    const lump = 1 + 0.12 * Math.sin(ux * 7.1 + uz * 5.3 + uy * 3.7);
-    const r = (1 - 0.72 * h) * lump;
-    p.setXYZ(i, ux * r * 2.2, h * 9, uz * r * 2.2);
-    const inv = 1 / Math.hypot(ux, 0.55, uz); n.setXYZ(i, ux * inv, 0.55 * inv, uz * inv);
-    t.copy(deep).lerp(bright, h * 0.9); col.set([t.r, t.g, t.b], i * 3);
+  const positions = [], indices = [], colors = [];
+  const deep = new THREE.Color(0x1f3820), mid = new THREE.Color(0x2f4f2c), bright = new THREE.Color(0x4a6838);
+  
+  // Trunk (dark brown cylinder)
+  const trunkH = 1.2, trunkR = 0.12;
+  const trunkSegs = 6;
+  for (let i = 0; i <= trunkSegs; i++) {
+    const angle = (i / trunkSegs) * Math.PI * 2;
+    const x = Math.cos(angle) * trunkR, z = Math.sin(angle) * trunkR;
+    positions.push(x, 0, z, x, trunkH, z);
+    const trunkCol = new THREE.Color(0x3a2818);
+    colors.push(trunkCol.r, trunkCol.g, trunkCol.b, trunkCol.r * 0.7, trunkCol.g * 0.7, trunkCol.b * 0.7);
+    if (i < trunkSegs) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, c, b, b, c, d);
+    }
   }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  
+  // Needle tiers (6 tiers, decreasing size toward top)
+  const tiers = 6;
+  let baseIdx = positions.length / 3;
+  for (let tier = 0; tier < tiers; tier++) {
+    const tierY = 0.8 + tier * 1.4;
+    const tierR = (2.2 - tier * 0.32) * (0.9 + Math.random() * 0.2);
+    const tierH = 0.9 - tier * 0.05;
+    const segs = 8;
+    const tipIdx = baseIdx;
+    const col = new THREE.Color().copy(deep).lerp(mid, tier / tiers).lerp(bright, 0.3 + tier * 0.1);
+    positions.push(0, tierY + tierH, 0);
+    colors.push(col.r * 1.2, col.g * 1.2, col.b * 1.2);
+    baseIdx++;
+    for (let i = 0; i <= segs; i++) {
+      const angle = (i / segs) * Math.PI * 2;
+      const x = Math.cos(angle) * tierR, z = Math.sin(angle) * tierR;
+      positions.push(x, tierY, z);
+      const baseCol = new THREE.Color().copy(col).multiplyScalar(0.7 + Math.random() * 0.3);
+      colors.push(baseCol.r, baseCol.g, baseCol.b);
+      if (i < segs) {
+        indices.push(tipIdx, baseIdx + i, baseIdx + i + 1);
+      }
+    }
+    baseIdx += segs + 1;
+  }
+  
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
   return g;
 }
 
