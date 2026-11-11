@@ -661,10 +661,12 @@ function loadRoute() {
       camera.far = graphicsSettings.getCameraFar();
       camera.updateProjectionMatrix();
       
-      // Use real terrain if available and not on Low quality
+      // Use real terrain if available (all quality levels)
       let terrain;
-      if (route.realTerrain && graphicsSettings.quality !== 'low') {
+      if (route.realTerrain) {
         console.log('Loading real terrain from:', route.realTerrain);
+        // Pass quality to terrain system
+        window._terrainQuality = graphicsSettings.quality;
         const realTerrainSystem = new RealTerrainSystem();
         realTerrainSystem.load(scene, route.realTerrain).then(() => {
           console.log('Real terrain loaded and rendered');

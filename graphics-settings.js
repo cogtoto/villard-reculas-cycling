@@ -122,7 +122,7 @@ class GraphicsSettings {
     
     if (preset.toneMapping) {
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.0;
+      renderer.toneMappingExposure = 0.85; // Less washed-out
     }
     
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -133,16 +133,16 @@ class GraphicsSettings {
     const preset = this.getPreset();
     
     if (routeType === 'villard') {
-      // Mountain haze - blue tint, denser
+      // Mountain haze - deeper blue matching sky horizon
       return {
-        color: new THREE.Color(0xb8c8d8),
+        color: new THREE.Color(0x88a8c8),
         near: preset.fogNear * 0.8,
         far: preset.fogFar * 0.9
       };
     } else if (routeType === 'normandy') {
-      // Softer countryside fog - warmer
+      // Softer countryside fog - warmer but less washed-out
       return {
-        color: new THREE.Color(0xdce4e8),
+        color: new THREE.Color(0xc8d4e0),
         near: preset.fogNear * 1.2,
         far: preset.fogFar * 1.1
       };

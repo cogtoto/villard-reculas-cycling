@@ -19,8 +19,10 @@ export function createProceduralSky(scene, sunDirection) {
   sky.scale.setScalar(450000);
   
   const skyUniforms = sky.material.uniforms;
-  skyUniforms['turbidity'].value = 8;
-  skyUniforms['rayleigh'].value = 2;
+  // Less turbidity for clearer, deeper blue
+  skyUniforms['turbidity'].value = 3;
+  // Higher rayleigh for deeper blue scattering
+  skyUniforms['rayleigh'].value = 3.5;
   skyUniforms['mieCoefficient'].value = 0.005;
   skyUniforms['mieDirectionalG'].value = 0.8;
   

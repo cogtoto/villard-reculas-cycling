@@ -2,11 +2,12 @@
 import * as THREE from 'three';
 
 class TerrainChunk {
-  constructor(name, heightData, metadata, chunkMeta) {
+  constructor(name, heightData, metadata, chunkMeta, orthoTexture) {
     this.name = name;
     this.heightData = heightData; // Int16Array
     this.metadata = metadata;
     this.chunkMeta = chunkMeta;
+    this.orthoTexture = orthoTexture; // Three.js Texture
     this.meshes = {}; // LOD levels: { lod0: mesh, lod1: mesh }
   }
   
@@ -44,49 +45,49 @@ class TerrainChunk {
     geometry.computeVertexNormals();
     geometry.computeBoundingBox();
     
-    // Simple material with vertex colors based on elevation
+    // Material with real orthoimagery texture
     const material = new THREE.MeshStandardMaterial({
-      color: 0x8a9a7a,
+      map: this.orthoTexture,
       roughness: 0.9,
-      metalness: 0.0,
-      vertexColors: false
+      metalness: 0.0
     });
     
-    // Add vertex colors based on elevation (grass/rock/snow)
-    const colors = new Float32Array(positions.length);
-    const minElev = this.metadata.minElevation;
-    const maxElev = this.metadata.maxElevation;
-    
-    for (let i = 0; i < positions.length / 3; i++) {
-      const elev = positions[i * 3 + 1];
-      const t = (elev - minElev) / (maxElev - minElev);
+    // If ortho texture is available, use it; otherwise fallback to vertex colors
+    if (!this.orthoTexture) {
+      material.color.set(0x8a9a7a);
+      material.vertexColors = true;
       
-      // Color gradient: green lowlands → brown mid → gray/white peaks
-      let r, g, b;
-      if (t < 0.3) {
-        // Green grass
-        r = 0.54 * (1 - t * 2);
-        g = 0.60 + t * 0.2;
-        b = 0.48 * (1 - t * 2);
-      } else if (t < 0.7) {
-        // Brown/gray rock
-        r = 0.5 + (t - 0.3) * 0.5;
-        g = 0.5 + (t - 0.3) * 0.3;
-        b = 0.4 + (t - 0.3) * 0.4;
-      } else {
-        // Gray/white peaks
-        r = 0.7 + (t - 0.7) * 1.0;
-        g = 0.7 + (t - 0.7) * 1.0;
-        b = 0.7 + (t - 0.7) * 1.0;
+      // Add vertex colors based on elevation (fallback)
+      const colors = new Float32Array(positions.length);
+      const minElev = this.metadata.minElevation;
+      const maxElev = this.metadata.maxElevation;
+      
+      for (let i = 0; i < positions.length / 3; i++) {
+        const elev = positions[i * 3 + 1];
+        const t = (elev - minElev) / (maxElev - minElev);
+        
+        let r, g, b;
+        if (t < 0.3) {
+          r = 0.54 * (1 - t * 2);
+          g = 0.60 + t * 0.2;
+          b = 0.48 * (1 - t * 2);
+        } else if (t < 0.7) {
+          r = 0.5 + (t - 0.3) * 0.5;
+          g = 0.5 + (t - 0.3) * 0.3;
+          b = 0.4 + (t - 0.3) * 0.4;
+        } else {
+          r = 0.7 + (t - 0.7) * 1.0;
+          g = 0.7 + (t - 0.7) * 1.0;
+          b = 0.7 + (t - 0.7) * 1.0;
+        }
+        
+        colors[i * 3] = r;
+        colors[i * 3 + 1] = g;
+        colors[i * 3 + 2] = b;
       }
       
-      colors[i * 3] = r;
-      colors[i * 3 + 1] = g;
-      colors[i * 3 + 2] = b;
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     }
-    
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    material.vertexColors = true;
     
     const mesh = new THREE.Mesh(geometry, material);
     mesh.receiveShadow = true;
@@ -112,7 +113,44 @@ export class RealTerrainSystem {
     
     console.log('Terrain metadata:', this.metadata);
     
-    // Load all chunks
+    // Load orthoimagery textures
+    const textureLoader = new THREE.TextureLoader();
+    const orthoTextures = {};
+    
+    if (this.metadata.orthoimagery) {
+      console.log('Loading orthoimagery textures...');
+      
+      const texturePromises = this.metadata.orthoimagery.map(ortho => {
+        return new Promise((resolve) => {
+          const texturePath = `${basePath}/${ortho.file}`;
+          textureLoader.load(
+            texturePath,
+            (texture) => {
+              texture.colorSpace = THREE.SRGBColorSpace;
+              texture.wrapS = THREE.ClampToEdgeWrapping;
+              texture.wrapT = THREE.ClampToEdgeWrapping;
+              texture.minFilter = THREE.LinearMipmapLinearFilter;
+              texture.magFilter = THREE.LinearFilter;
+              texture.generateMipmaps = true;
+              
+              const name = ortho.file.replace('ortho-', '').replace('.webp', '');
+              orthoTextures[name] = texture;
+              console.log(`  ✓ Loaded texture ${name}`);
+              resolve();
+            },
+            undefined,
+            (err) => {
+              console.warn(`  ✗ Failed to load ${ortho.file}:`, err);
+              resolve();
+            }
+          );
+        });
+      });
+      
+      await Promise.all(texturePromises);
+    }
+    
+    // Load all chunks with textures
     const chunkNames = ['nw', 'ne', 'sw', 'se'];
     
     for (const name of chunkNames) {
@@ -125,7 +163,8 @@ export class RealTerrainSystem {
         name,
         heightData,
         this.metadata,
-        this.metadata.chunks
+        this.metadata.chunks,
+        orthoTextures[name] || null
       );
       
       this.chunks.set(name, chunk);
@@ -133,7 +172,9 @@ export class RealTerrainSystem {
     }
     
     // Generate LOD meshes for all chunks
-    this.generateAllMeshes(scene);
+    // Get quality from global settings (will be set by main.js)
+    const quality = window._terrainQuality || 'medium';
+    this.generateAllMeshes(scene, quality);
     
     this.loaded = true;
     console.log('Real terrain loaded successfully');
@@ -141,7 +182,7 @@ export class RealTerrainSystem {
     return this.metadata;
   }
   
-  generateAllMeshes(scene) {
+  generateAllMeshes(scene, quality = 'medium') {
     const chunkOrder = [
       { name: 'nw', x: -1, z: -1 },
       { name: 'ne', x: 1, z: -1 },
@@ -158,16 +199,18 @@ export class RealTerrainSystem {
       const chunk = this.chunks.get(pos.name);
       if (!chunk) continue;
       
-      // Generate LOD 0 (high detail)
-      const lod0 = chunk.generateMesh(0);
-      lod0.position.set(pos.x * chunkSizeX, 0, pos.z * chunkSizeZ);
-      chunk.meshes.lod0 = lod0;
-      scene.add(lod0);
+      // Generate LOD 0 (high detail) - skip on Low quality
+      if (quality !== 'low') {
+        const lod0 = chunk.generateMesh(0);
+        lod0.position.set(pos.x * chunkSizeX, 0, pos.z * chunkSizeZ);
+        chunk.meshes.lod0 = lod0;
+        scene.add(lod0);
+      }
       
-      // Generate LOD 1 (low detail) - same position, will swap based on distance
+      // Generate LOD 1 (low detail) - always generate
       const lod1 = chunk.generateMesh(1);
-      lod1.position.copy(lod0.position);
-      lod1.visible = false; // Start with high detail
+      lod1.position.set(pos.x * chunkSizeX, 0, pos.z * chunkSizeZ);
+      lod1.visible = quality === 'low' ? true : false; // Visible on Low, hidden otherwise
       chunk.meshes.lod1 = lod1;
       scene.add(lod1);
     }
