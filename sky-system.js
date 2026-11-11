@@ -4,7 +4,7 @@ import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
 let currentHDRI = null;
 
-// Removed: createProceduralSky - use custom gradient dome in alpine/normandy atmosphere instead
+// createProceduralSky removed - custom gradient domes are created in alpine/normandy atmosphere functions
 
 // Load and setup HDRI environment (High quality only)
 export async function loadHDRIEnvironment(scene, renderer, hdriPath) {
@@ -25,14 +25,6 @@ export async function loadHDRIEnvironment(scene, renderer, hdriPath) {
         scene.background = envMap;
         
         currentHDRI = envMap;
-        
-        // Remove procedural sky if present
-        if (currentSky) {
-          scene.remove(currentSky);
-          currentSky.geometry?.dispose();
-          currentSky.material?.dispose();
-          currentSky = null;
-        }
         
         console.log('HDRI environment loaded:', hdriPath);
         resolve(envMap);
@@ -93,8 +85,7 @@ export function setupLighting(scene, renderer, quality, routeType) {
   const ambient = new THREE.HemisphereLight(skyColor, groundColor, 1.6);
   scene.add(ambient);
   
-  // Setup sky - always procedural for deep blue
-  createProceduralSky(scene, sunDirection);
+  // Sky dome is now created in route-specific atmosphere functions (alpine/normandy)
   
   // Brighter tone mapping for vivid colors
   renderer.toneMappingExposure = 1.1;
@@ -104,18 +95,11 @@ export function setupLighting(scene, renderer, quality, routeType) {
 
 // Cleanup
 export function cleanupSky(scene) {
-  if (currentSky) {
-    scene.remove(currentSky);
-    currentSky.geometry?.dispose();
-    currentSky.material?.dispose();
-    currentSky = null;
-  }
-  
   if (currentHDRI) {
     currentHDRI.dispose();
     currentHDRI = null;
   }
   
   scene.environment = null;
-  scene.background = null;
+  // Don't clear scene.background - route atmosphere sets it
 }

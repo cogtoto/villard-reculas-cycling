@@ -250,11 +250,11 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   );
   scene.add(sunSphere);
   
-  // Deep blue sky dome (Zwift-style) - follows camera, always at far plane
+  // Deep blue sky dome (Zwift-style) - renders FIRST behind everything
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     fog: false,
     toneMapped: false,
     uniforms: {
@@ -296,7 +296,7 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   // Small dome that follows camera
   const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 48, 24), skyMat);
   dome.frustumCulled = false;
-  dome.renderOrder = -999;
+  dome.renderOrder = -1000; // Render first, behind everything
   scene.add(dome);
   
   window._skyDome = dome;

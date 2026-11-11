@@ -253,11 +253,11 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   sun.color.set(0xfff6e8); sun.intensity = 2.4;
   renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
   
-  // Deep blue sky dome (Zwift-style) - follows camera, always at far plane
+  // Deep blue sky dome (Zwift-style) - renders FIRST behind everything
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, 
     depthWrite: false,
-    depthTest: false,
+    depthTest: true,
     fog: false,
     toneMapped: false,
     uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
@@ -282,7 +282,7 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   // Small dome that follows camera
   const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
   dome.frustumCulled = false;
-  dome.renderOrder = -999;
+  dome.renderOrder = -1000; // Render first, behind everything
   scene.add(dome);
   
   // Store reference for camera following
