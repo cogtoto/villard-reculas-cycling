@@ -31,7 +31,7 @@ const ROUTES = {
     description: 'descent + climb',
     gpx: '/villard-reculas.gpx',
     dem: { meta: '/dem-villard.json', bin: '/dem-villard.bin' },
-    realTerrain: '/terrain/villard', // Real IGN DEM relief with procedural coloring
+    // realTerrain disabled - using v0.5.11 procedural relief (correct proportions)
     setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
     setupAtmosphere: (scene, renderer, sun, sunDir) => alpineAtmosphere(scene, renderer, sun, sunDir),
     setupDecor: (scene, track, terrain) => {
@@ -596,11 +596,6 @@ function tick() {
   }
   if (seaMat) seaMat.uniforms.uTime.value = clock.elapsedTime;
   
-  // Update real terrain LOD if loaded
-  if (window._realTerrain && window._realTerrain.loaded) {
-    window._realTerrain.updateLOD(camera.position, graphicsSettings.quality);
-  }
-  
   renderer.render(scene, camera);
   
   // Update FPS counter if visible
@@ -664,54 +659,10 @@ function loadRoute() {
       camera.far = graphicsSettings.getCameraFar();
       camera.updateProjectionMatrix();
       
-      // Use real terrain if available
-      let terrain;
-      if (route.realTerrain) {
-        console.log('Loading real IGN DEM from:', route.realTerrain);
-        
-        const realTerrainSystem = new RealTerrainSystem();
-        realTerrainSystem.load(scene, route.realTerrain, track.origin, true).then(() => {
-          console.log('Real terrain loaded');
-          window._realTerrain = realTerrainSystem;
-          // Update groundAt to use real terrain
-          groundAt = realTerrainSystem.heightAt.bind(realTerrainSystem);
-          terrain.heightAt = groundAt;
-          console.log('groundAt now uses real DEM');
-        }).catch(err => {
-          console.warn('Real terrain failed:', err);
-          terrain = route.setupTerrain(scene, track, dem);
-          buildRoad(scene, track, 4, terrain);
-          groundAt = terrain.heightAt;
-        });
-        
-        // Stub terrain for road building (will be updated when real terrain loads)
-        terrain = {
-          center: { x: 0, y: 0, z: 0 },
-          span: 20000,
-          heightAt: (x, z) => {
-            let minDist = Infinity, nearestY = 0;
-            for (const pt of track.pts) {
-              const d = Math.hypot(pt.x - x, pt.z - z);
-              if (d < minDist) { minDist = d; nearestY = pt.y; }
-            }
-            return nearestY;
-          },
-          classify: () => 'meadow',
-          distTo: (x, z) => {
-            let minDist = Infinity;
-            for (const pt of track.pts) {
-              const d = Math.hypot(pt.x - x, pt.z - z);
-              if (d < minDist) minDist = d;
-            }
-            return minDist;
-          },
-          houses: []
-        };
-      } else {
-        terrain = route.setupTerrain(scene, track, dem);
-      }
+      // Use procedural terrain (v0.5.11 style - correct relief proportions)
+      const terrain = route.setupTerrain(scene, track, dem);
       
-      buildRoad(scene, track, 4, terrain, !!route.realTerrain);
+      buildRoad(scene, track, 4, terrain, false);
       groundAt = terrain.heightAt;
       
       // Create minimap (works with real or procedural terrain)

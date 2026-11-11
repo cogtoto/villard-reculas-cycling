@@ -228,24 +228,32 @@ export function installHeightFog() {
 #endif`;
 }
 
-// Ciel : dégradé comme l'exemple (couleur de brume à l'horizon → ciel clair) + halo du soleil
+// Zwift-style: beautiful deep blue sky, vivid colors, warm sunny light
 export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
-  const fogCol = new THREE.Color(0xd0dee7), skyTop = new THREE.Color(0xbcd4ea);
-  const base = opts.fogBase ?? 640, top = opts.fogTop ?? 1080;
-  scene.fog = new THREE.Fog(fogCol, base, top); // near/far = altitudes basse/haute de la bande de brume
-  scene.background = fogCol;
-  scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; }); // masque le Sky physique
-  // soleil bas et chaud (élévation 18°, azimut 150°)
-  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 18), THREE.MathUtils.degToRad(150));
-  sun.color.set(0xffd9b0); sun.intensity = 3.2;
-  renderer.toneMappingExposure = 0.62;
+  // Deep blue sky with light blue horizon (Zwift reference)
+  const horizonBlue = new THREE.Color(0xc0ddf5);
+  const deepBlue = new THREE.Color(0x2277dd);
+  
+  // Light fog matched to horizon blue
+  const base = opts.fogBase ?? 800, top = opts.fogTop ?? 1400;
+  scene.fog = new THREE.Fog(horizonBlue, base, top);
+  scene.background = horizonBlue;
+  
+  scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
+  
+  // Warm sunny light (handled by sky-system.js now)
+  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 25), THREE.MathUtils.degToRad(140));
+  sun.color.set(0xfff6e8); sun.intensity = 2.4;
+  renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
+  
+  // Deep blue sky dome (Zwift-style)
   const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 32, 16), new THREE.ShaderMaterial({
     side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uHor: { value: fogCol }, uTop: { value: skyTop }, uSun: { value: sunDir } },
+    uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
     vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
     fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
-      void main(){ float h = max(vD.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.55));
-        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 24.0); c += vec3(1.0, 0.85, 0.65) * g * 0.35;
+      void main(){ float h = max(vD.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.4));
+        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0); c += vec3(1.0, 0.92, 0.78) * g * 0.25;
         gl_FragColor = vec4(c, 1.0);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
@@ -256,10 +264,10 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   return { dome, fog: scene.fog };
 }
 
-// Realistic multi-tier spruce tree (alpine conifer with distinct branch tiers)
+// Vivid green alpine conifer (Zwift-style, not black silhouette)
 function conifer() {
   const positions = [], indices = [], colors = [];
-  const deep = new THREE.Color(0x1f3820), mid = new THREE.Color(0x2f4f2c), bright = new THREE.Color(0x4a6838);
+  const deep = new THREE.Color(0x3a5a38), mid = new THREE.Color(0x4a6b40), bright = new THREE.Color(0x5a7c48);
   
   // Trunk (dark brown cylinder)
   const trunkH = 1.2, trunkR = 0.12;
@@ -333,15 +341,17 @@ export function addForest(scene, track, terrain, max = 14000) {
     im.castShadow = shadow; scene.add(im);
   };
   const trunk = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 1 });
-  const firMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
+  const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
   const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
   // sapins : un seul InstancedMesh (+ couleur par instance, échelle variée façon exemple)
   const fim = new THREE.InstancedMesh(conifer(), firMat, firs.length), cc = new THREE.Color();
   firs.forEach((it, i) => {
     q.setFromAxisAngle(up, it.r); const k = it.s; sc.set(k * (0.85 + rand() * 0.3), k * (0.8 + rand() * 0.5), k * (0.85 + rand() * 0.3));
     v.set(it.x, it.y - 0.5, it.z); fim.setMatrixAt(i, m.compose(v, q, sc));
-    fim.setColorAt(i, cc.setHSL(0.27 + rand() * 0.05, 0.25 + rand() * 0.2, 0.75 + rand() * 0.35));
+    fim.setColorAt(i, cc.setHSL(0.28 + rand() * 0.04, 0.42 + rand() * 0.15, 0.38 + rand() * 0.12)); // Vivid green
   });
+  fim.castShadow = true;
+  fim.receiveShadow = true;
   scene.add(fim);
   inst(new THREE.CylinderGeometry(0.2, 0.3, 3, 5), trunk, leafy, 1.5, false);
   inst(new THREE.IcosahedronGeometry(2.4, 0), leafMat, leafy, 4.3, false);

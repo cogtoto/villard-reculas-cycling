@@ -19,12 +19,11 @@ export function createProceduralSky(scene, sunDirection) {
   sky.scale.setScalar(450000);
   
   const skyUniforms = sky.material.uniforms;
-  // Less turbidity for clearer, deeper blue
-  skyUniforms['turbidity'].value = 3;
-  // Higher rayleigh for deeper blue scattering
-  skyUniforms['rayleigh'].value = 3.5;
-  skyUniforms['mieCoefficient'].value = 0.005;
-  skyUniforms['mieDirectionalG'].value = 0.8;
+  // Zwift-style: beautiful deep blue sky, clear day
+  skyUniforms['turbidity'].value = 1.5;  // Very clear
+  skyUniforms['rayleigh'].value = 4.5;   // Deep blue
+  skyUniforms['mieCoefficient'].value = 0.002;
+  skyUniforms['mieDirectionalG'].value = 0.7;
   
   // Match sun position to directional light
   const phi = Math.acos(sunDirection.y);
@@ -79,59 +78,57 @@ export async function loadHDRIEnvironment(scene, renderer, hdriPath) {
   });
 }
 
-// Setup lighting based on quality and route
+// Setup lighting based on quality and route (Zwift-style sunny with shadows)
 export function setupLighting(scene, renderer, quality, routeType) {
   // Clear existing lights
   const lights = scene.children.filter(obj => obj.isLight);
   lights.forEach(light => scene.remove(light));
   
-  // Sun direction (morning light, slightly from side)
-  const sunDirection = new THREE.Vector3(0.3, 0.6, 0.8).normalize();
+  // Zwift-style: low warm sun creating beautiful shadows
+  const sunDirection = new THREE.Vector3(0.5, 0.4, 0.7).normalize();
   
-  // Directional sun light
-  const sun = new THREE.DirectionalLight(0xfff4e0, 1.8);
+  // Warm sunny directional light
+  const sun = new THREE.DirectionalLight(0xfff6e8, 2.4);
   sun.position.copy(sunDirection).multiplyScalar(1000);
-  sun.castShadow = quality === 'high';
   
-  if (sun.castShadow) {
+  // Enable shadows on all quality levels (Zwift-style)
+  sun.castShadow = true;
+  sun.shadow.bias = -0.0001;
+  sun.shadow.normalBias = 0.02;
+  
+  // Shadow map size based on quality
+  if (quality === 'high') {
     sun.shadow.mapSize.width = 2048;
     sun.shadow.mapSize.height = 2048;
-    sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 50;
-    sun.shadow.camera.left = -20;
-    sun.shadow.camera.right = 20;
-    sun.shadow.camera.top = 20;
-    sun.shadow.camera.bottom = -20;
-    sun.shadow.bias = -0.001;
+  } else if (quality === 'medium') {
+    sun.shadow.mapSize.width = 1536;
+    sun.shadow.mapSize.height = 1536;
+  } else {
+    sun.shadow.mapSize.width = 1024;
+    sun.shadow.mapSize.height = 1024;
   }
+  
+  // Shadow frustum follows rider (updated in tick)
+  sun.shadow.camera.near = 0.5;
+  sun.shadow.camera.far = 100;
+  sun.shadow.camera.left = -30;
+  sun.shadow.camera.right = 30;
+  sun.shadow.camera.top = 30;
+  sun.shadow.camera.bottom = -30;
   
   scene.add(sun);
   
-  // Ambient hemisphere light (softer than before for better contrast)
-  let skyColor, groundColor;
-  if (routeType === 'villard') {
-    skyColor = 0xb8d8ff;  // Cool alpine sky
-    groundColor = 0x8a9080; // Rocky ground
-  } else {
-    skyColor = 0xdce8ff;  // Warmer sky
-    groundColor = 0x7a8a60; // Grass
-  }
-  
-  const ambient = new THREE.HemisphereLight(skyColor, groundColor, 1.2);
+  // Bright hemisphere light for fill (vivid colors)
+  const skyColor = 0x87CEEB;  // Vivid sky blue
+  const groundColor = 0x8fae55; // Bright grass green
+  const ambient = new THREE.HemisphereLight(skyColor, groundColor, 1.6);
   scene.add(ambient);
   
-  // Setup sky based on quality
-  if (quality === 'high') {
-    // Try to load HDRI, fallback to procedural
-    loadHDRIEnvironment(scene, renderer, '/hdri/kloofendal_1k.hdr')
-      .catch(() => {
-        console.log('HDRI not available, using procedural sky');
-        createProceduralSky(scene, sunDirection);
-      });
-  } else {
-    // Low/Medium: procedural sky
-    createProceduralSky(scene, sunDirection);
-  }
+  // Setup sky - always procedural for deep blue
+  createProceduralSky(scene, sunDirection);
+  
+  // Brighter tone mapping for vivid colors
+  renderer.toneMappingExposure = 1.1;
   
   return { sun, sunDirection };
 }

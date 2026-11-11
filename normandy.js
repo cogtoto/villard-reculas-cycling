@@ -211,29 +211,31 @@ export function buildNormandyTerrain(scene, track, dem) {
   return { land, isLand, classify, distTo, heightAt, slopeAt, orchardMask, hedgeAt, houses: [], center: c, span: Math.max(size.x, size.z) };
 }
 
-// Bright sunny Normandy atmosphere with visible sun
+// Zwift-style Normandy: beautiful deep blue sky, very sunny with shadows
 export function normandyAtmosphere(scene, renderer, sun, sunDir) {
-  // Bright blue sky and vivid colors
-  const skyColor = new THREE.Color(0x5ba3d0); // Bright blue sky
-  scene.background = skyColor;
-  scene.fog = new THREE.FogExp2(0xc8dbe8, 0.00025); // Very light fog
+  // Deep blue sky with light horizon (Zwift reference)
+  const horizonBlue = new THREE.Color(0xc0ddf5);
+  const deepBlue = new THREE.Color(0x1a66cc);
+  
+  scene.background = horizonBlue;
+  scene.fog = new THREE.Fog(horizonBlue, 1200, 2800); // Light fog matched to sky
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
-  // Bright sunny day - sun high and strong
-  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 55), THREE.MathUtils.degToRad(160));
-  sun.color.set(0xfffef5); // Warm bright sunlight
-  sun.intensity = 3.8; // Strong sunlight
-  renderer.toneMappingExposure = 0.95; // Bright but readable
+  // Warm low sun creating beautiful shadows (Zwift-style)
+  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 30), THREE.MathUtils.degToRad(145));
+  sun.color.set(0xfff6e8); // Warm sunny light
+  sun.intensity = 2.4; // Bright with strong shadows
+  renderer.toneMappingExposure = 1.1; // Vivid colors
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   
   // Add visible sun sphere
-  const sunSphereGeo = new THREE.SphereGeometry(80, 32, 32);
+  const sunSphereGeo = new THREE.SphereGeometry(90, 32, 32);
   const sunSphereMat = new THREE.MeshBasicMaterial({
-    color: 0xffffe0,
+    color: 0xfffef0,
     fog: false
   });
   const sunSphere = new THREE.Mesh(sunSphereGeo, sunSphereMat);
-  const sunDist = 2000;
+  const sunDist = 3000;
   sunSphere.position.set(
     sunDir.x * sunDist,
     sunDir.y * sunDist,
@@ -241,19 +243,15 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   );
   scene.add(sunSphere);
   
-  // Sky dome with gradient (simplified - no fogCol dependency)
-  const horizonColor = new THREE.Color(0xc8dbe8);
-  const skyMidColor = new THREE.Color(0x7db8db);
-  const skyTopColor = new THREE.Color(0x5ba3d0);
-  
+  // Deep blue sky dome (Zwift-style)
   const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 48, 24), new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     fog: false,
     uniforms: {
-      uHorizon: { value: horizonColor },
-      uMid: { value: skyMidColor },
-      uTop: { value: skyTopColor },
+      uHorizon: { value: horizonBlue },
+      uMid: { value: new THREE.Color(0x5599dd) },
+      uTop: { value: deepBlue },
       uSun: { value: sunDir }
     },
     vertexShader: `
