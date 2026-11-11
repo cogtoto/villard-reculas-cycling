@@ -5,8 +5,15 @@ const $ = (id) => document.getElementById(id);
 const log = (m) => { console.log(m); const l = $('log'); l.textContent = (new Date().toLocaleTimeString() + ' ' + m + '\n' + l.textContent).slice(0, 3000); };
 const setStatus = (id, text, cls) => { const e = $(id); e.textContent = text; e.className = cls; };
 
+// Load saved PC IP and port (persists across app restarts in WebView localStorage)
+// Note: localStorage clears on uninstall, but survives app updates with same signing key
 $('ip').value = localStorage.getItem('pcIp') || '';
 $('port').value = localStorage.getItem('pcPort') || '8787';
+
+// If IP is loaded, show hint to reconnect
+if ($('ip').value) {
+  setStatus('pc-status', 'tap "Connect PC" to reconnect', 'off');
+}
 
 // ---- WebSocket to PC (server/index.js of velo-virtuel) ----
 let ws = null, wantPc = false, retry = null;

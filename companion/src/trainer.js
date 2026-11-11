@@ -33,71 +33,76 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
     await BleClient.initialize({ androidNeverForLocation: true });
     
     // Request device with service filters to show only trainers/power meters
-    // Note: Some devices (e.g., Van Rysel D500) may not advertise service UUIDs in scan
-    // so we use namePrefix as fallback hint (optional, non-binding)
     const dev = await BleClient.requestDevice({
-      services: [FTMS, CPS], // Prefer explicit service filter
-      optionalServices: [FTMS, CPS],
-      // Fallback: if device doesn't advertise services, show known trainer name prefixes
-      namePrefix: undefined // Will show all if services not advertised
+      services: [FTMS, CPS], // Filter picker to trainers only
+      optionalServices: [FTMS, CPS]
     });
     
+    onLog(`Connecting to ${dev.name || dev.deviceId}...`);
     await BleClient.connect(dev.deviceId, () => { deviceId = null; control = false; onDisconnect(); });
+    onLog('Connected, discovering services...');
     
-    // Android may return empty/cached service list immediately after connect
-    // Retry service discovery with delay to ensure GATT database is populated
-    let svcs = [];
-    let discoveryAttempt = 0;
-    const maxAttempts = 3;
+    // On Android, getServices() returns cached data and may be empty
+    // We know from advertisement that FTMS/CPS exists, so try direct connection
+    // Strategy: Try FTMS first (preferred), then fall back to CPS
+    let connectedService = null;
     
-    while (discoveryAttempt < maxAttempts) {
-      try {
-        const services = await BleClient.getServices(dev.deviceId);
-        svcs = services.map((s) => s.uuid.toLowerCase());
-        
-        // Check if we found expected services
-        if (svcs.includes(FTMS) || svcs.includes(CPS)) {
-          onLog(`Found services on attempt ${discoveryAttempt + 1}: ${svcs.length} total`);
-          break;
-        }
-        
-        // If no services found and not last attempt, wait and retry
-        if (discoveryAttempt < maxAttempts - 1) {
-          onLog(`Service discovery attempt ${discoveryAttempt + 1}: no trainer services yet, retrying...`);
-          await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms before retry
-        }
-      } catch (e) {
-        onLog(`Service discovery attempt ${discoveryAttempt + 1} error: ${e.message}`);
-        if (discoveryAttempt === maxAttempts - 1) throw e;
-      }
-      discoveryAttempt++;
-    }
-    
-    // Setup notifications based on discovered services
-    if (svcs.includes(FTMS)) {
+    try {
+      // Try FTMS Indoor Bike Data characteristic
+      onLog('Attempting FTMS connection...');
       await BleClient.startNotifications(dev.deviceId, FTMS, IBD, onIbd);
+      connectedService = 'FTMS';
+      onLog('FTMS data notifications started');
+      
+      // Try to enable FTMS control point for ERG mode
       try {
         await BleClient.startNotifications(dev.deviceId, FTMS, FTMS_CP, () => {});
         await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x00])); // Request Control
         await BleClient.write(dev.deviceId, FTMS, FTMS_CP, bytes([0x07])); // Start/Resume
         control = true;
-      } catch (e) { onLog('FTMS control point unavailable: ' + e.message); }
-    } else if (svcs.includes(CPS)) {
-      await BleClient.startNotifications(dev.deviceId, CPS, CPM, onCps);
-    } else {
-      // Provide detailed diagnostic error message
-      const deviceInfo = `${dev.name || 'Unknown'} (${dev.deviceId})`;
-      const serviceList = svcs.length > 0 
-        ? svcs.map(s => s.slice(4, 8)).join(', ')
-        : 'none';
-      throw new Error(
-        `Device ${deviceInfo} has no Cycling Power or FTMS service. ` +
-        `Found services: ${serviceList}. ` +
-        `Expected: 0x1818 (Cycling Power) or 0x1826 (FTMS).`
-      );
+        onLog('FTMS control point enabled (ERG mode available)');
+      } catch (e) {
+        onLog('FTMS control point unavailable (power data only): ' + e.message);
+      }
+    } catch (ftmsError) {
+      onLog('FTMS not available: ' + ftmsError.message);
+      
+      // Fall back to Cycling Power Service
+      try {
+        onLog('Attempting Cycling Power connection...');
+        await BleClient.startNotifications(dev.deviceId, CPS, CPM, onCps);
+        connectedService = 'CPS';
+        onLog('Cycling Power notifications started');
+      } catch (cpsError) {
+        onLog('Cycling Power not available: ' + cpsError.message);
+        
+        // Both failed - provide diagnostic info
+        // Try getServices for diagnostic purposes only
+        let svcs = [];
+        try {
+          const services = await BleClient.getServices(dev.deviceId);
+          svcs = services.map((s) => s.uuid.toLowerCase());
+        } catch (e) {
+          onLog('getServices also failed: ' + e.message);
+        }
+        
+        const deviceInfo = `${dev.name || 'Unknown'} (${dev.deviceId})`;
+        const serviceList = svcs.length > 0 
+          ? svcs.map(s => s.slice(4, 8)).join(', ')
+          : 'none (getServices returned empty)';
+        
+        throw new Error(
+          `Device ${deviceInfo} connection failed. ` +
+          `Advertisement showed FTMS/CPS but characteristics not accessible. ` +
+          `FTMS error: ${ftmsError.message}. CPS error: ${cpsError.message}. ` +
+          `Services from getServices: ${serviceList}. ` +
+          `Try: Turn trainer off/on, unpair in phone Bluetooth settings, then retry.`
+        );
+      }
     }
     
     deviceId = dev.deviceId;
+    onLog(`Successfully connected via ${connectedService}`);
     return { name: dev.name || dev.deviceId, control };
   }
 
