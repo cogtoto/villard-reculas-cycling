@@ -21,43 +21,46 @@ function createCloudTexture() {
   return new THREE.CanvasTexture(canvas);
 }
 
-// Add clouds around the sky dome (billboards facing camera)
+// Add clouds that follow camera (inside camera.far)
 export function addCloudsToSky(scene, center, radius, count = 8) {
   const cloudTexture = createCloudTexture();
   const cloudMaterial = new THREE.SpriteMaterial({
     map: cloudTexture,
     transparent: true,
     depthWrite: false,
-    toneMapped: false, // Don't tone map clouds
+    toneMapped: false,
     opacity: 0.85
   });
   
   const clouds = [];
-  const minHeight = radius * 0.3;
-  const maxHeight = radius * 0.6;
   
   for (let i = 0; i < count; i++) {
     const sprite = new THREE.Sprite(cloudMaterial.clone());
     
-    // Random position on sky dome hemisphere
-    const phi = Math.random() * Math.PI * 2; // azimuth
-    const theta = Math.PI * 0.15 + Math.random() * Math.PI * 0.25; // elevation (upper hemisphere)
+    // Random position in upper hemisphere (relative offsets)
+    const phi = Math.random() * Math.PI * 2;
+    const theta = Math.PI * 0.15 + Math.random() * Math.PI * 0.25;
     
-    const dist = radius * 0.7;
-    const x = center.x + Math.sin(theta) * Math.cos(phi) * dist;
-    const y = center.y + Math.cos(theta) * dist;
-    const z = center.z + Math.sin(theta) * Math.sin(phi) * dist;
+    // Small radius relative to camera (will be repositioned each frame)
+    const dist = 60 + Math.random() * 20;
+    const x = Math.sin(theta) * Math.cos(phi) * dist;
+    const y = Math.cos(theta) * dist;
+    const z = Math.sin(theta) * Math.sin(phi) * dist;
     
     sprite.position.set(x, y, z);
+    sprite.userData.offset = { x, y, z }; // Store offset for camera following
     
-    // Random cloud size
-    const scale = 8000 + Math.random() * 6000;
+    // Cloud size
+    const scale = 15 + Math.random() * 10;
     sprite.scale.set(scale, scale * 0.6, 1);
     
-    sprite.renderOrder = -998; // Render after sky dome
+    sprite.renderOrder = -998;
     scene.add(sprite);
     clouds.push(sprite);
   }
+  
+  // Store reference for camera following
+  window._skyClouds = clouds;
   
   return clouds;
 }

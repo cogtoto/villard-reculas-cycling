@@ -237,14 +237,14 @@ export function installHeightFog() {
 
 // Zwift-style: beautiful deep blue sky, vivid colors, warm sunny light
 export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
-  // Deep blue sky with light blue horizon (Zwift reference)
-  const horizonBlue = new THREE.Color(0xc0ddf5);
-  const deepBlue = new THREE.Color(0x2277dd);
+  // Deep blue sky with light blue horizon (Zwift reference) - brighter for visibility
+  const horizonBlue = new THREE.Color(0xe0f0ff);
+  const deepBlue = new THREE.Color(0x4499ff);
   
   // Light fog matched to horizon blue
   const base = opts.fogBase ?? 800, top = opts.fogTop ?? 1400;
   scene.fog = new THREE.Fog(horizonBlue, base, top);
-  scene.background = deepBlue; // Deep blue background (dome should render over this)
+  scene.background = deepBlue; // Deep blue background fallback
   
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
@@ -253,31 +253,40 @@ export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
   sun.color.set(0xfff6e8); sun.intensity = 2.4;
   renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
   
-  // Deep blue sky dome (Zwift-style) - NO tone mapping, NO fog, pure blue output
+  // Deep blue sky dome (Zwift-style) - follows camera, always at far plane
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide, 
     depthWrite: false,
     depthTest: false,
-    fog: false, // Critical: no fog
-    toneMapped: false, // Critical: bypass ACES tone mapping
+    fog: false,
+    toneMapped: false,
     uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
-    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-    fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
-      void main(){ 
+    vertexShader: `
+      varying vec3 vD;
+      void main() {
+        vD = normalize(position);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = p.xyww; // Force to far plane
+      }`,
+    fragmentShader: `
+      uniform vec3 uHor, uTop, uSun;
+      varying vec3 vD;
+      void main() {
         float h = clamp(vD.y, 0.0, 1.0);
-        // Deep gradient: horizon (light blue) to zenith (deep blue)
         vec3 c = mix(uHor, uTop, pow(h, 0.28));
-        // Sun glow
         float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0);
         c += vec3(1.0, 0.95, 0.85) * g * 0.15;
-        // Output sRGB directly (no tone mapping)
         gl_FragColor = vec4(c, 1.0);
       }`,
   });
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 32, 16), skyMat);
+  // Small dome that follows camera
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
   dome.frustumCulled = false;
   dome.renderOrder = -999;
   scene.add(dome);
+  
+  // Store reference for camera following
+  window._skyDome = dome;
   
   // Add white clouds
   const clouds = addCloudsToSky(scene, new THREE.Vector3(0, 0, 0), 450000, 6);

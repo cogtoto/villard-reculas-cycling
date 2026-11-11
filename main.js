@@ -594,6 +594,23 @@ function tick() {
       sun.target.position.set(pos.x, pos.y, pos.z);
     }
   }
+  
+  // Update sky dome and clouds to follow camera
+  if (window._skyDome) {
+    window._skyDome.position.copy(camera.position);
+  }
+  if (window._skyClouds) {
+    for (const cloud of window._skyClouds) {
+      if (cloud.userData.offset) {
+        cloud.position.set(
+          camera.position.x + cloud.userData.offset.x,
+          camera.position.y + cloud.userData.offset.y,
+          camera.position.z + cloud.userData.offset.z
+        );
+      }
+    }
+  }
+  
   if (seaMat) seaMat.uniforms.uTime.value = clock.elapsedTime;
   
   renderer.render(scene, camera);
@@ -648,10 +665,11 @@ function loadRoute() {
       sun = lighting.sun;
       sunDirection = lighting.sunDirection;
       
-      // Setup fog based on route and quality
-      const fogSettings = graphicsSettings.getFogSettings(selectedRoute);
-      scene.fog = new THREE.Fog(fogSettings.color, fogSettings.near, fogSettings.far);
-      // Don't set scene.background - let sky dome show through
+      // CRITICAL: Call route-specific atmosphere setup FIRST (sky dome, clouds, fog)
+      // This must run before any other fog setup so the route's blue fog isn't overwritten
+      if (route.setupAtmosphere) {
+        route.setupAtmosphere(scene, renderer, sun, sunDirection);
+      }
       
       // Update camera far plane
       camera.far = graphicsSettings.getCameraFar();

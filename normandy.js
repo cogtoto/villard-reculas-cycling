@@ -220,11 +220,11 @@ export function buildNormandyTerrain(scene, track, dem) {
 
 // Zwift-style Normandy: beautiful deep blue sky, very sunny with shadows
 export function normandyAtmosphere(scene, renderer, sun, sunDir) {
-  // Deep blue sky with light horizon (Zwift reference)
-  const horizonBlue = new THREE.Color(0xc0ddf5);
-  const deepBlue = new THREE.Color(0x1a66cc);
+  // Deep blue sky with light horizon (Zwift reference) - brighter for visibility
+  const horizonBlue = new THREE.Color(0xe0f0ff);
+  const deepBlue = new THREE.Color(0x3388ee);
   
-  scene.background = deepBlue; // Deep blue background
+  scene.background = deepBlue; // Deep blue background fallback
   scene.fog = new THREE.Fog(horizonBlue, 1200, 2800); // Light fog matched to sky
   scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
   
@@ -250,13 +250,13 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
   );
   scene.add(sunSphere);
   
-  // Deep blue sky dome (Zwift-style) - NO tone mapping, NO fog
+  // Deep blue sky dome (Zwift-style) - follows camera, always at far plane
   const skyMat = new THREE.ShaderMaterial({
     side: THREE.BackSide,
     depthWrite: false,
     depthTest: false,
-    fog: false, // Critical: no fog
-    toneMapped: false, // Critical: bypass ACES tone mapping
+    fog: false,
+    toneMapped: false,
     uniforms: {
       uHorizon: { value: horizonBlue },
       uMid: { value: new THREE.Color(0x5599dd) },
@@ -267,7 +267,8 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
       varying vec3 vDir;
       void main() {
         vDir = normalize(position);
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = p.xyww; // Force to far plane
       }
     `,
     fragmentShader: `
@@ -277,7 +278,6 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
       void main() {
         float h = clamp(vDir.y, 0.0, 1.0);
         
-        // Deep blue gradient (Zwift-style)
         vec3 c;
         if (h < 0.22) {
           c = mix(uHorizon, uMid, h / 0.22);
@@ -285,20 +285,21 @@ export function normandyAtmosphere(scene, renderer, sun, sunDir) {
           c = mix(uMid, uTop, (h - 0.22) / 0.78);
         }
         
-        // Sun glow
         float sunDot = max(dot(normalize(vDir), normalize(uSun)), 0.0);
         float sunGlow = pow(sunDot, 16.0) * 0.22 + pow(sunDot, 4.0) * 0.10;
         c += vec3(1.0, 0.97, 0.88) * sunGlow;
         
-        // Output sRGB directly
         gl_FragColor = vec4(c, 1.0);
       }
     `,
   });
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(450000, 48, 24), skyMat);
+  // Small dome that follows camera
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 48, 24), skyMat);
   dome.frustumCulled = false;
   dome.renderOrder = -999;
   scene.add(dome);
+  
+  window._skyDome = dome;
   
   // Add white clouds
   const clouds = addCloudsToSky(scene, new THREE.Vector3(0, 0, 0), 450000, 8);

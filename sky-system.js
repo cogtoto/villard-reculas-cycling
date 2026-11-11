@@ -1,42 +1,10 @@
-// Sky system with Three.js Sky shader and optional HDRI
+// Sky system without Three.js Sky addon (removed to avoid ACES washing)
 import * as THREE from 'three';
-import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader.js';
 
-let currentSky = null;
 let currentHDRI = null;
 
-// Create Three.js Sky shader matched to directional sun
-export function createProceduralSky(scene, sunDirection) {
-  // Clean up old sky
-  if (currentSky) {
-    scene.remove(currentSky);
-    currentSky.geometry?.dispose();
-    currentSky.material?.dispose();
-  }
-  
-  const sky = new Sky();
-  sky.scale.setScalar(450000);
-  
-  const skyUniforms = sky.material.uniforms;
-  // Zwift-style: beautiful deep blue sky, clear day
-  skyUniforms['turbidity'].value = 1.5;  // Very clear
-  skyUniforms['rayleigh'].value = 4.5;   // Deep blue
-  skyUniforms['mieCoefficient'].value = 0.002;
-  skyUniforms['mieDirectionalG'].value = 0.7;
-  
-  // Match sun position to directional light
-  const phi = Math.acos(sunDirection.y);
-  const theta = Math.atan2(sunDirection.x, sunDirection.z);
-  const sunPosition = new THREE.Vector3();
-  sunPosition.setFromSphericalCoords(1, phi, theta);
-  skyUniforms['sunPosition'].value.copy(sunPosition);
-  
-  scene.add(sky);
-  currentSky = sky;
-  
-  return sky;
-}
+// Removed: createProceduralSky - use custom gradient dome in alpine/normandy atmosphere instead
 
 // Load and setup HDRI environment (High quality only)
 export async function loadHDRIEnvironment(scene, renderer, hdriPath) {
