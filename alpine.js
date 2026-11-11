@@ -333,7 +333,7 @@ export function addForest(scene, track, terrain, max = 14000) {
     im.castShadow = shadow; scene.add(im);
   };
   const trunk = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 1 });
-  const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
+  const firMat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
   // sapins : un seul InstancedMesh (+ couleur par instance, échelle variée façon exemple)
   const fim = new THREE.InstancedMesh(conifer(), firMat, firs.length), cc = new THREE.Color();

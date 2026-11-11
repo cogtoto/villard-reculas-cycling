@@ -1,13 +1,25 @@
 // Real terrain system using chunked heightmaps with LOD
 import * as THREE from 'three';
+import { PALETTE } from './palette.js';
+
+// Noise functions for procedural coloring
+function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
+function vnoise(x, y) {
+  const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+  const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf);
+  const a = hash(xi, yi), b = hash(xi + 1, yi), c = hash(xi, yi + 1), d = hash(xi + 1, yi + 1);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function fbm(x, y, o = 5) { let s = 0, a = 0.5, f = 1; for (let i = 0; i < o; i++) { s += a * vnoise(x * f, y * f); f *= 2.03; a *= 0.5; } return s; }
 
 class TerrainChunk {
-  constructor(name, heightData, metadata, chunkMeta, orthoTexture) {
+  constructor(name, heightData, metadata, chunkMeta, orthoTexture, terrainSystem) {
     this.name = name;
     this.heightData = heightData; // Int16Array
     this.metadata = metadata;
     this.chunkMeta = chunkMeta;
     this.orthoTexture = orthoTexture; // Three.js Texture
+    this.terrainSystem = terrainSystem; // Parent system for procedural coloring
     this.meshes = {}; // LOD levels: { lod0: mesh, lod1: mesh }
   }
   
@@ -53,11 +65,10 @@ class TerrainChunk {
       console.log(`Chunk ${this.name} LOD${lodLevel}: UVs present, ${geometry.attributes.uv.count} points`);
     }
     
-    // Material with real orthoimagery texture
-    // Use MeshStandardMaterial with emissive to ensure visibility
+    // Material: procedural vertex colors OR orthoimagery texture
     let material;
     if (this.orthoTexture) {
-      console.log(`Chunk ${this.name} LOD${lodLevel}: Creating material with texture`, this.orthoTexture.image?.width, 'x', this.orthoTexture.image?.height);
+      console.log(`Chunk ${this.name} LOD${lodLevel}: Using ortho texture`);
       material = new THREE.MeshStandardMaterial({
         map: this.orthoTexture,
         roughness: 1.0,
@@ -67,52 +78,96 @@ class TerrainChunk {
         emissiveIntensity: 0.3,
         side: THREE.FrontSide
       });
-      // Force texture update
       if (this.orthoTexture.image) {
         this.orthoTexture.needsUpdate = true;
       }
-      console.log(`Material map set:`, material.map !== null, 'needsUpdate:', this.orthoTexture.needsUpdate);
     } else {
-      console.warn(`Chunk ${this.name} LOD${lodLevel}: No texture! Using fallback color`);
+      console.log(`Chunk ${this.name} LOD${lodLevel}: Using procedural vertex colors`);
       material = new THREE.MeshStandardMaterial({
-        color: 0xff00ff, // Bright magenta to make it obvious
+        vertexColors: true,
         roughness: 1.0,
-        metalness: 0.0
+        metalness: 0.0,
+        side: THREE.FrontSide
       });
     }
     
-    // If ortho texture is available, use it; otherwise fallback to vertex colors
+    // Generate procedural vertex colors if no ortho texture
     if (!this.orthoTexture) {
-      material.color.set(0x8a9a7a);
-      material.vertexColors = true;
-      
-      // Add vertex colors based on elevation (fallback)
       const colors = new Float32Array(positions.length);
-      const minElev = this.metadata.minElevation;
-      const maxElev = this.metadata.maxElevation;
+      const COL = PALETTE.terrain;
+      const C = (h) => [(h >> 16) / 255, ((h >> 8) & 255) / 255, (h & 255) / 255];
+      const meadow = C(COL.meadow), meadow2 = C(COL.meadow2);
+      const forest = C(COL.forest), forest2 = C(COL.forest2);
+      const rock = C(COL.rock), rock2 = C(COL.rock2);
+      const snow = C(COL.snow), snowShade = C(COL.snowShade);
       
-      for (let i = 0; i < positions.length / 3; i++) {
-        const elev = positions[i * 3 + 1];
-        const t = (elev - minElev) / (maxElev - minElev);
-        
-        let r, g, b;
-        if (t < 0.3) {
-          r = 0.54 * (1 - t * 2);
-          g = 0.60 + t * 0.2;
-          b = 0.48 * (1 - t * 2);
-        } else if (t < 0.7) {
-          r = 0.5 + (t - 0.3) * 0.5;
-          g = 0.5 + (t - 0.3) * 0.3;
-          b = 0.4 + (t - 0.3) * 0.4;
-        } else {
-          r = 0.7 + (t - 0.7) * 1.0;
-          g = 0.7 + (t - 0.7) * 1.0;
-          b = 0.7 + (t - 0.7) * 1.0;
+      for (let i = 0; i < ny; i++) {
+        for (let j = 0; j < nx; j++) {
+          const idx = (i * nx + j) * 3;
+          const x = positions[idx];
+          const y = positions[idx + 1];
+          const z = positions[idx + 2];
+          
+          // World position
+          const wx = x + this.chunkMeta[this.name].centerX;
+          const wz = z + this.chunkMeta[this.name].centerZ;
+          
+          // Calculate slope from neighbors
+          let slope = 0;
+          if (j > 0 && j < nx - 1 && i > 0 && i < ny - 1) {
+            const dx = positions[idx + 3] - positions[idx - 3];
+            const dzElev = positions[(i + 1) * nx * 3 + j * 3 + 1] - positions[(i - 1) * nx * 3 + j * 3 + 1];
+            slope = Math.sqrt(dx * dx + dzElev * dzElev) / (2 * (sizeX / (nx - 1)));
+          }
+          
+          // Procedural classification by altitude and slope
+          const n = fbm(wx * 0.004, wz * 0.004, 3);
+          const microGrass = fbm(wx * 0.15, wz * 0.15, 2) * 0.15;
+          const microRock = fbm(wx * 0.08, wz * 0.08, 3) * 0.2;
+          
+          let col;
+          const snowLine = 2150 + (n - 0.5) * 350;
+          if (y > snowLine || y > 2400) {
+            // Snow
+            const t = hash(j, i) * 0.5 + n * 0.3;
+            col = [
+              snow[0] + (snowShade[0] - snow[0]) * t,
+              snow[1] + (snowShade[1] - snow[1]) * t,
+              snow[2] + (snowShade[2] - snow[2]) * t
+            ];
+          } else if (slope > 0.9 || y > 2250 + n * 200) {
+            // Rock
+            const t = n * 0.7 + microRock * 0.3;
+            col = [
+              rock[0] + (rock2[0] - rock[0]) * t,
+              rock[1] + (rock2[1] - rock[1]) * t,
+              rock[2] + (rock2[2] - rock[2]) * t
+            ];
+          } else if (y < 2000 && fbm(wx * 0.0018, wz * 0.0018, 4) > 0.47 && slope < 0.7) {
+            // Forest
+            const t = hash(j, i) * 0.6 + microGrass * 0.4;
+            col = [
+              forest[0] + (forest2[0] - forest[0]) * t,
+              forest[1] + (forest2[1] - forest[1]) * t,
+              forest[2] + (forest2[2] - forest[2]) * t
+            ];
+          } else {
+            // Meadow
+            const altBlend = Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600));
+            const t = altBlend + microGrass * 0.3;
+            col = [
+              meadow[0] + (meadow2[0] - meadow[0]) * t,
+              meadow[1] + (meadow2[1] - meadow[1]) * t,
+              meadow[2] + (meadow2[2] - meadow[2]) * t
+            ];
+          }
+          
+          // Brightness variation
+          const v = 0.88 + hash(j, i) * 0.18;
+          colors[idx] = Math.min(1, col[0] * v);
+          colors[idx + 1] = Math.min(1, col[1] * v);
+          colors[idx + 2] = Math.min(1, col[2] * v);
         }
-        
-        colors[i * 3] = r;
-        colors[i * 3 + 1] = g;
-        colors[i * 3 + 2] = b;
       }
       
       geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -133,11 +188,13 @@ export class RealTerrainSystem {
     this.loaded = false;
   }
   
-  async load(scene, basePath, gpxOrigin) {
+  async load(scene, basePath, gpxOrigin, useProceduralColor = false) {
     console.log('Loading real terrain from:', basePath);
     console.log('GPX origin:', gpxOrigin);
+    console.log('Use procedural color:', useProceduralColor);
     
     this.gpxOrigin = gpxOrigin;
+    this.useProceduralColor = useProceduralColor;
     
     // Load metadata
     const metaResponse = await fetch(`${basePath}/metadata.json`);
@@ -145,13 +202,13 @@ export class RealTerrainSystem {
     
     console.log('Terrain metadata:', this.metadata);
     
-    // Load orthoimagery textures
-    const textureLoader = new THREE.TextureLoader();
+    // Load orthoimagery textures only if not using procedural color
     const orthoTextures = {};
     
-    if (this.metadata.orthoimagery) {
+    if (!useProceduralColor && this.metadata.orthoimagery) {
       console.log('Loading orthoimagery textures...');
       
+      const textureLoader = new THREE.TextureLoader();
       const texturePromises = this.metadata.orthoimagery.map(ortho => {
         return new Promise((resolve) => {
           const texturePath = `${basePath}/${ortho.file}`;
@@ -190,6 +247,8 @@ export class RealTerrainSystem {
       
       await Promise.all(texturePromises);
       console.log('All textures loaded:', Object.keys(orthoTextures));
+    } else if (useProceduralColor) {
+      console.log('Using procedural coloring (no orthoimagery)');
     }
     
     // Load all chunks with textures
@@ -206,7 +265,8 @@ export class RealTerrainSystem {
         heightData,
         this.metadata,
         this.metadata.chunks,
-        orthoTextures[name] || null
+        orthoTextures[name] || null,
+        this
       );
       
       this.chunks.set(name, chunk);
