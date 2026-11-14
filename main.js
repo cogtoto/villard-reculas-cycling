@@ -13,7 +13,7 @@ import { addRoadside } from './roadside.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
 import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
 import { addNormandyChurches } from './normandy-churches.js';
-import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, createVariedThresholdWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
+import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, createVariedThresholdWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, getWorkoutLegendZones, getPowerZoneFromWatts, POWER_ZONES, formatTime } from './workouts.js';
 import { buildTcx, saveFile, toLatLon } from './export.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
@@ -88,12 +88,21 @@ let rideStartTime = 0; // Wall clock time when ride actually started
     document.getElementById('mode-step').style.display = 'none'; 
     document.getElementById('route-step').style.display = ''; 
   };
-  if (localStorage.getItem(FTP_KEY)) showMode();
-  document.getElementById('ftp-ok').onclick = () => {
+  // Always wait for an explicit confirm — do not auto-skip when FTP is already saved.
+  const confirmFtp = () => {
     const v = Math.round(Number(inp.value));
     if (!(v >= 50 && v <= 600)) { inp.style.outline = '2px solid #e74c3c'; return; }
-    FTP_W = v; localStorage.setItem(FTP_KEY, String(v)); document.getElementById('ftp').textContent = v; showMode();
+    inp.style.outline = '';
+    FTP_W = v;
+    localStorage.setItem(FTP_KEY, String(v));
+    document.getElementById('ftp').textContent = v;
+    showMode();
   };
+  document.getElementById('ftp-ok').onclick = confirmFtp;
+  document.getElementById('ftp-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    confirmFtp();
+  });
   
   document.getElementById('mode-ok').onclick = () => {
     selectedMode = document.querySelector('input[name="mode"]:checked')?.value || 'free';
@@ -163,17 +172,8 @@ let rideStartTime = 0; // Wall clock time when ride actually started
     loadRoute(); // Load the selected route
   };
 }
-const POWER_ZONES = [ // borne haute en %FTP, couleur de fond, couleur du texte
-  { z: 'Z1', max: 55, bg: '#9e9e9e', fg: '#111' },      // récupération active
-  { z: 'Z2', max: 75, bg: '#2e86de', fg: '#fff' },      // endurance
-  { z: 'Z3', max: 90, bg: '#27ae60', fg: '#fff' },      // tempo
-  { z: 'Z4', max: 105, bg: '#f1c40f', fg: '#111' },     // seuil
-  { z: 'Z5', max: 120, bg: '#e67e22', fg: '#111' },     // VO2max
-  { z: 'Z6', max: 150, bg: '#e74c3c', fg: '#fff' },     // anaérobie
-  { z: 'Z7', max: Infinity, bg: '#8e44ad', fg: '#fff' }, // neuromusculaire
-];
 document.getElementById('ftp').textContent = FTP_W;
-const zoneFor = (w) => { const pct = (w / FTP_W) * 100; return { pct, ...POWER_ZONES.find((z) => pct < z.max) }; };
+const zoneFor = (w) => getPowerZoneFromWatts(w || 0, FTP_W);
 const hud = {
   watts: document.getElementById('watts'),
   cadence: document.getElementById('cadence'),
@@ -287,7 +287,7 @@ const sensors = createSensors((msg) => {
     state = { ...state, ...msg };
     hud.watts.textContent = Math.round(state.watts);
     { const zn = zoneFor(state.watts || 0), el = document.getElementById('zone');
-      el.textContent = zn.z; el.style.background = zn.bg; el.style.color = zn.fg;
+      el.textContent = zn.z; el.style.background = zn.color; el.style.color = zn.fg;
       document.getElementById('pctftp').textContent = `(${Math.round(zn.pct)} %)`; }
     hud.cadence.textContent = Math.round(state.cadence);
     hud.source.textContent = state.source || 'ws';
@@ -327,7 +327,7 @@ if (bleBtn) bleBtn.onclick = async () => {
 
 // --- Statistiques de sortie + bouton Stop ---
 const S = { elapsed: 0, moving: 0, dist: 0, maxV: 0, gain: 0, loss: 0, lastY: null, wSum: 0, wMax: 0, w30: [], np4: 0, npN: 0, npAcc: 0, npT: 0,
-  cadSum: 0, cadT: 0, t0: 0, nextSample: 0, samples: [], zones: new Array(7).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
+  cadSum: 0, cadT: 0, t0: 0, nextSample: 0, samples: [], zones: new Array(POWER_ZONES.length).fill(0), gearSum: 0, gearMin: Infinity, gearMax: -Infinity, shifts: 0 };
 function recordStats(dt, here) {
   S.elapsed += dt;
   const v = physV, w = state.watts || 0;
@@ -346,11 +346,10 @@ function recordStats(dt, here) {
   if (S.npT >= 1) { S.w30.push(S.npAcc / S.npT); S.npAcc = 0; S.npT = 0; if (S.w30.length > 30) S.w30.shift();
     if (S.w30.length === 30) { const a = S.w30.reduce((s, x) => s + x, 0) / 30; S.np4 += a ** 4; S.npN++; } }
   if (state.cadence > 0) { S.cadSum += state.cadence * dt; S.cadT += dt; }
-  S.zones[POWER_ZONES.indexOf(POWER_ZONES.find((z) => (w / FTP_W) * 100 < z.max))] += dt;
+  S.zones[POWER_ZONES.findIndex((z) => (w / FTP_W) * 100 < z.maxPct)] += dt;
   S.gearSum += gear * dt; S.gearMin = Math.min(S.gearMin, gear); S.gearMax = Math.max(S.gearMax, gear);
 }
 const fmtT = (s) => { s = Math.round(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + 'h ' : '') + String(m).padStart(h ? 2 : 1, '0') + 'm ' + String(x).padStart(2, '0') + 's'; };
-const ZONE_NAMES = ['Easy recovery', 'Endurance', 'Tempo', 'Threshold', 'VO2 max', 'Anaerobic', 'Sprint'];
 function showStats() {
   document.getElementById('stats-route').textContent = ROUTES[selectedRoute].name + ' · ride paused';
   const kmh = (ms) => (ms * 3.6).toFixed(1);
@@ -359,7 +358,7 @@ function showStats() {
   const card = (label, value, sub = '') => `<div class="st-card"><div class="st-l">${label}</div><div class="st-v">${value}</div>${sub ? `<div class="st-s">${sub}</div>` : ''}</div>`;
   const tot = S.zones.reduce((a, b) => a + b, 0) || 1;
   const zones = POWER_ZONES.map((z, i) => { const p = (S.zones[i] / tot) * 100;
-    return `<div class="st-z"><span class="st-zt" style="background:${z.bg};color:${z.fg}">${z.z}</span><span class="st-zn">${ZONE_NAMES[i]}</span><span class="st-zb"><i style="width:${p.toFixed(1)}%;background:${z.bg}"></i></span><span class="st-zp">${fmtT(S.zones[i])}</span></div>`; }).join('');
+    return `<div class="st-z"><span class="st-zt" style="background:${z.color};color:${z.fg}">${z.z}</span><span class="st-zn">${z.name}</span><span class="st-zb"><i style="width:${p.toFixed(1)}%;background:${z.color}"></i></span><span class="st-zp">${fmtT(S.zones[i])}</span></div>`; }).join('');
   document.getElementById('stats-body').innerHTML = `
     <div class="st-sec">Time &amp; distance</div><div class="st-grid">
       ${card('Riding time', fmtT(S.moving), 'Total: ' + fmtT(S.elapsed))}
@@ -787,71 +786,25 @@ function drawWorkoutProfileStatic() {
   
   profile.forEach(interval => {
     const w = (interval.duration / totalDuration) * width;
-    ctx.fillStyle = interval.color;
+    if (interval.startColor && interval.endColor && interval.startColor !== interval.endColor) {
+      const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+      grad.addColorStop(0, interval.startColor);
+      grad.addColorStop(1, interval.endColor);
+      ctx.fillStyle = grad;
+    } else {
+      ctx.fillStyle = interval.color;
+    }
     ctx.fillRect(x, 0, w, height);
     x += w;
   });
   
-  // Build compact legend showing each segment's power target
+  // Compact legend: only the power zones present in this workout
   const legendDiv = document.getElementById('workout-legend');
   if (legendDiv) {
-    const items = [];
-    const seen = new Map(); // Track type+target combinations to avoid duplicates
-    let rampSummaryAdded = false;
-    
-    // Collect all ramp stages first if this is a ramp test
-    const rampIntervals = currentWorkout.intervals.filter(i => i.type === 'ramp');
-    
-    // Show each distinct interval type with its target
-    currentWorkout.intervals.forEach((interval, idx) => {
-      const prof = profile[idx];
-      if (!prof) return;
-      
-      let label, key;
-      
-      if (interval.targetStart !== undefined && interval.targetEnd !== undefined) {
-        // Progressive (warmup/cooldown)
-        const startPct = Math.round((interval.targetStart / FTP_W) * 100);
-        const endPct = Math.round((interval.targetEnd / FTP_W) * 100);
-        label = `${startPct}–${endPct}% (${Math.round(interval.targetStart)}–${Math.round(interval.targetEnd)}W)`;
-        key = `${interval.type}-${interval.targetStart}-${interval.targetEnd}`;
-      } else if (interval.target !== undefined) {
-        // Fixed target
-        const pct = Math.round((interval.target / FTP_W) * 100);
-        const watts = Math.round(interval.target);
-        label = `${pct}% (${watts}W)`;
-        key = `${interval.type}-${interval.target}`;
-      } else {
-        return;
-      }
-      
-      // For ramp stages, show compact summary once instead of listing all
-      if (interval.type === 'ramp') {
-        if (!rampSummaryAdded && rampIntervals.length > 0) {
-          const firstRamp = rampIntervals[0];
-          const lastRamp = rampIntervals[rampIntervals.length - 1];
-          const firstPct = Math.round((firstRamp.target / FTP_W) * 100);
-          const lastPct = Math.round((lastRamp.target / FTP_W) * 100);
-          const summary = `<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${prof.color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">Ramp:</span> ${firstPct}%→${lastPct}% (${Math.round(firstRamp.target)}W→${Math.round(lastRamp.target)}W, +20W/min)</span>`;
-          items.push(summary);
-          rampSummaryAdded = true;
-        }
-        return; // Skip individual ramp stages
-      }
-      
-      // Skip if we've already shown this type+target combination
-      if (seen.has(key)) return;
-      seen.set(key, true);
-      
-      const type = interval.type === 'warmup' ? 'Warm' : 
-                   interval.type === 'cooldown' ? 'Cool' :
-                   interval.type === 'recovery' ? 'Rec' :
-                   interval.type === 'work' ? 'Work' : interval.type;
-      
-      items.push(`<span style="display:inline-block;margin:2px 0"><span style="display:inline-block;width:8px;height:8px;background:${prof.color};border-radius:1px;margin-right:3px;vertical-align:middle"></span><span style="font-weight:600">${type}:</span> ${label}</span>`);
-    });
-    
-    legendDiv.innerHTML = items.join(' · ');
+    const items = getWorkoutLegendZones(currentWorkout, FTP_W).map(z =>
+      `<span style="display:inline-flex;align-items:center;margin:2px 8px 2px 0;white-space:nowrap"><span style="display:inline-block;width:10px;height:10px;background:${z.color};border-radius:2px;margin-right:4px"></span>${z.z} ${z.name}</span>`
+    );
+    legendDiv.innerHTML = items.join('');
   }
 }
 

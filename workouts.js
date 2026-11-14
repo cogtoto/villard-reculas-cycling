@@ -244,34 +244,66 @@ export function calculateEstimatedFTP(powerHistory) {
   return Math.round(bestMinute * 0.75);
 }
 
-// Generate workout profile for visualization (bar chart)
-// Returns array of { duration, target, type, zone }
+// Zwift-style power zones. maxPct is an exclusive upper bound (% of FTP).
+// Z1 <60%, Z2 60–75%, Z3 76–89%, Z4 90–104%, Z5 105–118%, Z6 >=119%.
+export const POWER_ZONES = [
+  { z: 'Z1', name: 'Recovery',  maxPct: 60,  color: '#7f7f7f', fg: '#fff' },
+  { z: 'Z2', name: 'Endurance', maxPct: 76,  color: '#338cff', fg: '#fff' },
+  { z: 'Z3', name: 'Tempo',     maxPct: 90,  color: '#59bf59', fg: '#fff' },
+  { z: 'Z4', name: 'Threshold', maxPct: 105, color: '#ffcc3f', fg: '#111' },
+  { z: 'Z5', name: 'VO2max',    maxPct: 119, color: '#ff6639', fg: '#fff' },
+  { z: 'Z6', name: 'Anaerobic', maxPct: Infinity, color: '#ff330c', fg: '#fff' }
+];
+
+export function getPowerZone(pctFtp) {
+  const pct = Number(pctFtp);
+  return POWER_ZONES.find(z => pct < z.maxPct) || POWER_ZONES[POWER_ZONES.length - 1];
+}
+
+export function getPowerZoneFromWatts(watts, userFTP) {
+  const ftp = Number(userFTP) || 0;
+  const pct = ftp > 0 ? (Number(watts) / ftp) * 100 : 0;
+  return { pct, ...getPowerZone(pct) };
+}
+
+// Zones actually used by a workout, in Z1–Z6 order (for the compact legend).
+export function getWorkoutLegendZones(workout, userFTP) {
+  const present = new Set();
+  for (const interval of workout.intervals) {
+    if (interval.targetStart !== undefined && interval.targetEnd !== undefined) {
+      present.add(getPowerZoneFromWatts(interval.targetStart, userFTP).z);
+      present.add(getPowerZoneFromWatts(interval.targetEnd, userFTP).z);
+      present.add(getPowerZoneFromWatts((interval.targetStart + interval.targetEnd) / 2, userFTP).z);
+    } else if (interval.target !== undefined) {
+      present.add(getPowerZoneFromWatts(interval.target, userFTP).z);
+    }
+  }
+  return POWER_ZONES.filter(z => present.has(z.z));
+}
+
+// Generate workout profile for visualization (bar chart).
+// Ramps (targetStart/targetEnd) are coloured by average power, with start/end
+// colours so the bar can draw a gradient.
 export function getWorkoutProfile(workout, userFTP) {
-  const zones = [
-    { max: 0.55, name: 'Z1', color: '#4ade80' },
-    { max: 0.75, name: 'Z2', color: '#fbbf24' },
-    { max: 0.90, name: 'Z3', color: '#fb923c' },
-    { max: 1.05, name: 'Z4', color: '#ef4444' },
-    { max: 1.20, name: 'Z5', color: '#dc2626' },
-    { max: Infinity, name: 'Z6+', color: '#991b1b' }
-  ];
-  
-  const getZone = (watts) => {
-    const pct = watts / userFTP;
-    return zones.find(z => pct <= z.max) || zones[zones.length - 1];
-  };
-  
   return workout.intervals.map(interval => {
-    const avgTarget = interval.target || (interval.targetStart + interval.targetEnd) / 2;
-    const zone = getZone(avgTarget);
-    return {
+    const hasRange = interval.targetStart !== undefined && interval.targetEnd !== undefined;
+    const avgTarget = interval.target !== undefined
+      ? interval.target
+      : (interval.targetStart + interval.targetEnd) / 2;
+    const zone = getPowerZoneFromWatts(avgTarget, userFTP);
+    const row = {
       duration: interval.duration,
       target: Math.round(avgTarget),
       type: interval.type,
       name: interval.name,
-      zone: zone.name,
+      zone: zone.z,
       color: zone.color
     };
+    if (hasRange) {
+      row.startColor = getPowerZoneFromWatts(interval.targetStart, userFTP).color;
+      row.endColor = getPowerZoneFromWatts(interval.targetEnd, userFTP).color;
+    }
+    return row;
   });
 }
 
@@ -285,7 +317,7 @@ export function createVariedThresholdWorkout(userFTP) {
     duration: 90, // 1:30
     target: 95,
     cadence: 85,
-    name: 'Warm-up Z2',
+    name: 'Warm-up',
     coachingMessage: "Wake up the legs. Zone 2 = endurance: you can talk easily, this is where your aerobic engine is built."
   });
   intervals.push({
