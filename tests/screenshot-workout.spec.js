@@ -56,11 +56,13 @@ test('Varied Threshold coaching message on screen', async ({ page }) => {
     if (banner) {
       banner.textContent = "Wake up the legs. Zone 2 = endurance: you can talk easily, this is where your aerobic engine is built.";
       banner.style.visibility = 'visible';
+      banner.style.opacity = '1';
+      banner.classList.remove('fade-out');
       banner.classList.add('fade-in');
     }
   });
   
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(800);
   
   await page.screenshot({ 
     path: '/opt/cursor/artifacts/varied-threshold-coaching-message.png', 
