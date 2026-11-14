@@ -1,5 +1,6 @@
 import { createTrainer } from './trainer.js';
 import { createPowerChart, zoneFor } from './chart.js';
+import { createHrSensor } from './hr-sensor.js';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 
 const $ = (id) => document.getElementById(id);
@@ -54,14 +55,23 @@ const chart = createPowerChart($('chart'), () => ftp);
 const showZone = (w) => { const z = zoneFor(w, ftp), e = $('zone'); e.textContent = z.z; e.style.background = z.bg; e.style.color = z.fg; };
 
 // ---- BLE trainer ----
-let last = { watts: 0, cadence: 0, sensor: '' };
+let last = { watts: 0, cadence: 0, sensor: '', hr: null }; // Added hr field
 const trainer = createTrainer({
-  onData: (d) => { last = d; chart.add(d.watts); showZone(d.watts); $('watts').textContent = Math.round(d.watts); $('cadence').textContent = Math.round(d.cadence); send({ type: 'companion', ...d, ts: Date.now() }); },
+  onData: (d) => { 
+    last.watts = d.watts; 
+    last.cadence = d.cadence; 
+    last.sensor = d.sensor;
+    chart.add(d.watts); 
+    showZone(d.watts); 
+    $('watts').textContent = Math.round(d.watts); 
+    $('cadence').textContent = Math.round(d.cadence); 
+    send({ type: 'companion', ...last, ts: Date.now() }); 
+  },
   onLog: log,
   onDisconnect: () => { setStatus('ble-status', 'disconnected', 'off'); $('ble-btn').disabled = false; $('ble-btn').textContent = 'Connect HomeTrainer'; },
 });
 // keepalive (trainer stops notifying at 0 W on some models) so the PC keeps "companion" as source
-setInterval(() => { if (trainer.connected) send({ type: 'companion', ...last, ts: Date.now() }); }, 1000);
+setInterval(() => { if (trainer.connected || hrSensor.connected) send({ type: 'companion', ...last, ts: Date.now() }); }, 1000);
 
 $('ble-btn').onclick = async () => {
   const b = $('ble-btn'); b.disabled = true; b.textContent = 'Connecting…'; setStatus('ble-status', 'scanning…', 'wait');
@@ -70,6 +80,52 @@ $('ble-btn').onclick = async () => {
     setStatus('ble-status', `${r.name}${r.control ? ' (FTMS control)' : ' (power only)'}`, 'on'); b.textContent = '✓ ' + r.name;
   } catch (e) { log('BLE: ' + (e.message || e)); setStatus('ble-status', String(e.message || e).slice(0, 60), 'off'); b.disabled = false; b.textContent = 'Connect HomeTrainer'; }
 };
+
+// ---- BLE Heart Rate sensor ----
+let lastHrUpdate = 0;
+const hrSensor = createHrSensor({
+  onData: (d) => {
+    lastHrUpdate = Date.now();
+    last.hr = d.bpm;
+    $('hr-bpm').textContent = d.bpm;
+    send({ type: 'companion', ...last, ts: Date.now() });
+  },
+  onLog: log,
+  onDisconnect: () => {
+    setStatus('hr-status', 'disconnected', 'off');
+    $('hr-btn').disabled = false;
+    $('hr-btn').textContent = 'Connect HR Sensor';
+    $('hr-bpm').textContent = '--';
+    last.hr = null;
+  },
+});
+
+$('hr-btn').onclick = async () => {
+  const b = $('hr-btn');
+  b.disabled = true;
+  b.textContent = 'Connecting…';
+  setStatus('hr-status', 'scanning…', 'wait');
+  try {
+    const r = await hrSensor.connect();
+    setStatus('hr-status', r.name, 'on');
+    b.textContent = '✓ ' + r.name;
+    // Remember last HR device
+    localStorage.setItem('vv.hrDevice', r.name);
+  } catch (e) {
+    log('HR: ' + (e.message || e));
+    setStatus('hr-status', String(e.message || e).slice(0, 60), 'off');
+    b.disabled = false;
+    b.textContent = 'Connect HR Sensor';
+  }
+};
+
+// Clear HR if no data for >5s
+setInterval(() => {
+  if (hrSensor.connected && last.hr && Date.now() - lastHrUpdate > 5000) {
+    $('hr-bpm').textContent = '--';
+    last.hr = null;
+  }
+}, 1000);
 
 // ---- Gears ----
 for (const [id, delta] of [['gear-up', 1], ['gear-down', -1]]) {

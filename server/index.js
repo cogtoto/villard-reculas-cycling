@@ -34,6 +34,10 @@ wss.on('connection', (ws) => {
       const watts = Number(m.watts) || 0;
       live = { type: 'telemetry', watts, cadence: Number(m.cadence) || 0, gradePct: clientGrade,
         speedKmh: speedFromWatts(watts, clientGrade), source: 'companion' + (m.sensor ? ' ' + m.sensor : ''), ts: Date.now() };
+      // Include optional HR if present
+      if (m.hr !== null && m.hr !== undefined && Number(m.hr) > 0) {
+        live.hr = Number(m.hr);
+      }
       broadcast(live);
     }
     else if (ws.isCompanion && m.type === 'shift') { const d = JSON.stringify({ type: 'shift', delta: Math.sign(Number(m.delta) || 0) }); for (const c of viewers()) c.send(d); }

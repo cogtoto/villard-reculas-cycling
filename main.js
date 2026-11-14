@@ -175,6 +175,8 @@ const zoneFor = (w) => { const pct = (w / FTP_W) * 100; return { pct, ...POWER_Z
 const hud = {
   watts: document.getElementById('watts'),
   cadence: document.getElementById('cadence'),
+  hrBpm: document.getElementById('hr-bpm'),
+  hrField: document.getElementById('hr-field'),
   speed: document.getElementById('speed'),
   grade: document.getElementById('grade'),
   source: document.getElementById('source'),
@@ -275,6 +277,10 @@ addEventListener('keydown', (e) => {
     }
   }
 });
+// HR management: show field when HR data present, hide after 30s of no data
+let lastHrUpdate = 0;
+let hrHideTimer = null;
+
 const sensors = createSensors((msg) => {
     state = { ...state, ...msg };
     hud.watts.textContent = Math.round(state.watts);
@@ -283,6 +289,14 @@ const sensors = createSensors((msg) => {
       document.getElementById('pctftp').textContent = `(${Math.round(zn.pct)} %)`; }
     hud.cadence.textContent = Math.round(state.cadence);
     hud.source.textContent = state.source || 'ws';
+    
+    // Handle HR display
+    if (msg.hr !== undefined && msg.hr !== null && Number(msg.hr) > 0) {
+      lastHrUpdate = Date.now();
+      hud.hrBpm.textContent = Math.round(msg.hr);
+      hud.hrField.style.display = '';
+      if (hrHideTimer) clearTimeout(hrHideTimer);
+    }
 }, { 
     onLog: (m) => console.log('[ble]', m),
     onShift: (delta) => shift(delta) // Companion app gear shift relay
@@ -612,6 +626,21 @@ function tick() {
   }
   
   if (seaMat) seaMat.uniforms.uTime.value = clock.elapsedTime;
+  
+  // Check HR staleness: show "--" after 5s, hide after 30s
+  if (lastHrUpdate > 0) {
+    const hrAge = Date.now() - lastHrUpdate;
+    if (hrAge > 5000 && hud.hrBpm.textContent !== '--') {
+      hud.hrBpm.textContent = '--';
+      if (!hrHideTimer) {
+        hrHideTimer = setTimeout(() => {
+          hud.hrField.style.display = 'none';
+          hrHideTimer = null;
+          lastHrUpdate = 0;
+        }, 30000);
+      }
+    }
+  }
   
   renderer.render(scene, camera);
   
