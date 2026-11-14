@@ -378,14 +378,36 @@ export function addVegetation(scene, track, terrain) {
 }
 
 // ---------- route ----------
-export function buildRoad(scene, track, width = 4, terrain = null) {
+export function buildRoad(scene, track, width = 4, terrain = null, useRealTerrain = false) {
   const { pts, cum } = track, n = pts.length;
+  
+  // If using real terrain, smooth DEM elevations for road
+  let roadElevations = pts.map(p => p.y);
+  if (useRealTerrain && terrain && terrain.heightAt) {
+    console.log('Using DEM elevations for road (smoothed)');
+    // Sample DEM under each GPX point
+    const demElevations = pts.map(p => terrain.heightAt(p.x, p.z));
+    // Smooth with moving average (~50m window)
+    const windowSize = Math.max(5, Math.floor(50 / (cum[1] - cum[0] || 10)));
+    roadElevations = demElevations.map((_, i) => {
+      const start = Math.max(0, i - windowSize);
+      const end = Math.min(demElevations.length, i + windowSize + 1);
+      const sum = demElevations.slice(start, end).reduce((a, b) => a + b, 0);
+      return sum / (end - start);
+    });
+  }
+  
   const asphalt = canvasTex(512, (g, s) => {
     const img = g.createImageData(s, s);
     for (let i = 0; i < s * s; i++) {
       const x = i % s, y = (i / s) | 0;
-      const v = 52 + fbm(x * 0.05, y * 0.05) * 16 + Math.random() * 12 + (Math.random() < 0.01 ? 30 : 0); // asphalte sombre, bien lisible sur l'herbe
-      img.data.set([v, v + 2, v + 6, 255], i * 4);
+      // Realistic asphalt: dark grey base with aggregate variation and weathering
+      const aggregate = fbm(x * 0.08, y * 0.08) * 18;
+      const wear = fbm(x * 0.02, y * 0.02) * 10; // Macro weathering patches
+      const gravel = (Math.random() < 0.015 ? 25 : 0); // Small bright aggregate stones
+      const v = 48 + aggregate + wear + gravel + Math.random() * 8;
+      // Slight warm tint (aged asphalt)
+      img.data.set([v, v + 1, v + 3, 255], i * 4);
     }
     g.putImageData(img, 0, 0);
   });
@@ -396,8 +418,8 @@ export function buildRoad(scene, track, width = 4, terrain = null) {
       let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
       const nx = -tz, nz = tx, p = pts[i];
       const ax = p.x + nx * offA, az = p.z + nz * offA, bx = p.x + nx * offB, bz = p.z + nz * offB;
-      // jamais sous le terrain : max(altitude tracé, sol sous le bord / l'axe)
-      const gy = terrain ? Math.max(p.y, terrain.heightAt(p.x, p.z), terrain.heightAt(ax, az), terrain.heightAt(bx, bz)) : p.y;
+      // Use smoothed DEM elevation if available
+      const gy = roadElevations[i];
       pos.set([ax, gy + yLift, az, bx, gy + yLift, bz], i * 6);
       uv.set([0, cum[i] / vScale, 1, cum[i] / vScale], i * 4);
       if (i < n - 1) { const k = i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
@@ -409,17 +431,32 @@ export function buildRoad(scene, track, width = 4, terrain = null) {
     return g;
   };
   const h = width / 2, side = THREE.DoubleSide;
-  const road = new THREE.Mesh(ribbon(h, -h, 0.4, 6), new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.92, metalness: 0, side, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }));
+  // Road lifted 25cm and with strong polygonOffset to always stay above terrain
+  const road = new THREE.Mesh(ribbon(h, -h, 0.25, 6), new THREE.MeshStandardMaterial({ 
+    map: asphalt, 
+    roughness: 0.92, 
+    metalness: 0, 
+    side, 
+    polygonOffset: true, 
+    polygonOffsetFactor: -3, 
+    polygonOffsetUnits: -3 
+  }));
   road.receiveShadow = true; road.frustumCulled = false; scene.add(road);
-  // bas-côtés en herbe légèrement plus bas
-  const shoulderMat = new THREE.MeshStandardMaterial({ color: 0x8a8f7a, roughness: 1, side, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 }); // bas-côtés herbeux
-  scene.add(new THREE.Mesh(ribbon(h + 0.8, h, 0.3, 6), shoulderMat), new THREE.Mesh(ribbon(-h, -h - 0.8, 0.3, 6), shoulderMat));
-  // lignes latérales continues + axe pointillé (texture)
-  const lineMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0x555555, roughness: 0.6, side, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-  scene.add(new THREE.Mesh(ribbon(h - 0.15, h - 0.3, 0.43, 6), lineMat), new THREE.Mesh(ribbon(-h + 0.3, -h + 0.15, 0.43, 6), lineMat));
-  const dash = canvasTex(64, (g, s) => { g.clearRect(0, 0, s, s); g.fillStyle = '#f0f0e8'; g.fillRect(0, 0, s, s * 0.4); });
-  dash.colorSpace = THREE.SRGBColorSpace;
-  // (pas d'axe central pointillé : route de montagne étroite, comme sur place)
+  
+  // Grass verges (no grey shoulders, no white edge lines per user preference)
+  if (!useRealTerrain) {
+    const vergeMat = new THREE.MeshStandardMaterial({ 
+      color: 0x7c8a50, 
+      roughness: 1, 
+      side, 
+      polygonOffset: true, 
+      polygonOffsetFactor: -2, 
+      polygonOffsetUnits: -2 
+    });
+    scene.add(new THREE.Mesh(ribbon(h + 0.6, h, 0.08, 6), vergeMat), new THREE.Mesh(ribbon(-h, -h - 0.6, 0.08, 6), vergeMat));
+  }
+  
+  // NO road markings (no center line, no edge lines per user preference for alpine roads)
 }
 
 

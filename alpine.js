@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 import { PALETTE } from './palette.js';
+import { addCloudsToSky } from './clouds.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -86,11 +87,17 @@ export function buildAlpineTerrain(scene, track, dem) {
     let y = demAt(x, z);
     const nr = nearest(x, z, 1);
     if (nr.d < 300) {
-      // près de la chaussée : altitude GPX lissée (écart MNT/GPX médian ≈ 6 m), talus déblai/remblai
+      // Road corridor: terrain always below road (road at nr.y + 0.25)
       const t = THREE.MathUtils.smoothstep(nr.d, 14, 70);
-      y = (nr.y - 0.3) * (1 - t) + y * t;
-      y = Math.min(y, nr.y - 0.4 + Math.max(0, nr.d - 7) * 0.8);
-      y = Math.max(y, nr.y - 0.4 - Math.max(0, nr.d - 7) * 1.0);
+      y = (nr.y - 0.35) * (1 - t) + y * t; // Start 35cm below GPX
+      // Under road: must be at least 50cm below to prevent z-fighting
+      if (nr.d < 7) {
+        y = Math.min(y, nr.y - 0.5);
+      } else {
+        // Slopes away from road
+        y = Math.min(y, nr.y - 0.5 + Math.max(0, nr.d - 7) * 0.8);
+        y = Math.max(y, nr.y - 0.5 - Math.max(0, nr.d - 7) * 1.0);
+      }
     }
     if (nr.d > 25 && waterAt(x, z)) y = Math.min(y, WL - 4); // fond du lac sous la surface
     pos.setY(i, y);
@@ -129,15 +136,24 @@ export function buildAlpineTerrain(scene, track, dem) {
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   for (let j = 0; j < FZ; j++) for (let i = 0; i < FX; i++) {
     const x = x0 + (i + 0.5) * PX, z = z0 + (j + 0.5) * PX, k = classify(x, z), r = hash(i, j), n = fbm(x * 0.004, z * 0.004, 3);
+    // Micro-detail noise for grass/rock texture (high frequency)
+    const microGrass = fbm(x * 0.15, z * 0.15, 2) * 0.15;
+    const microRock = fbm(x * 0.08, z * 0.08, 3) * 0.2 + hash(i * 7, j * 11) * 0.1;
+    
     let col;
     if (k === 'water') col = mix(COL.water, COL.water2, r * 0.3);
-    else if (k === 'shore') col = mix(COL.shore, COL.rock, r * 0.4);
-    else if (k === 'snow') col = mix(COL.snow, COL.snowShade, r * 0.5 + n * 0.3); // blanc bleuté, légères ombres
-    else if (k === 'rock') col = mix(COL.rock, COL.rock2, n);
-    else if (k === 'forest') col = mix(COL.forest, COL.forest2, r * 0.6);
-    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5);
-    else { const y = heightAt(x, z); col = mix(COL.meadow, COL.meadow2, Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600))); }
-    const v = 0.9 + r * 0.14, o = (j * FX + i) * 4;
+    else if (k === 'shore') col = mix(COL.shore, COL.rock, r * 0.4 + microRock);
+    else if (k === 'snow') col = mix(COL.snow, COL.snowShade, r * 0.5 + n * 0.3); // white-blue, slight shadows
+    else if (k === 'rock') col = mix(COL.rock, COL.rock2, n * 0.7 + microRock * 0.3);
+    else if (k === 'forest') col = mix(COL.forest, COL.forest2, r * 0.6 + microGrass * 0.4);
+    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5 + microGrass * 0.3);
+    else { 
+      // Meadow: blend with altitude and add grass texture detail
+      const y = heightAt(x, z); 
+      const altBlend = Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600));
+      col = mix(COL.meadow, COL.meadow2, altBlend + microGrass * 0.3); 
+    }
+    const v = 0.88 + r * 0.18, o = (j * FX + i) * 4;
     D[o] = Math.min(255, col[0] * v); D[o + 1] = Math.min(255, col[1] * v); D[o + 2] = Math.min(255, col[2] * v); D[o + 3] = 255;
   }
   g2.putImageData(img, 0, 0);
@@ -219,48 +235,197 @@ export function installHeightFog() {
 #endif`;
 }
 
-// Ciel : dégradé comme l'exemple (couleur de brume à l'horizon → ciel clair) + halo du soleil
+// Zwift-style: beautiful deep blue sky, vivid colors, warm sunny light
 export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
-  const fogCol = new THREE.Color(0xd0dee7), skyTop = new THREE.Color(0xbcd4ea);
-  const base = opts.fogBase ?? 640, top = opts.fogTop ?? 1080;
-  scene.fog = new THREE.Fog(fogCol, base, top); // near/far = altitudes basse/haute de la bande de brume
-  scene.background = fogCol;
-  scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; }); // masque le Sky physique
-  // soleil bas et chaud (élévation 18°, azimut 150°)
-  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 18), THREE.MathUtils.degToRad(150));
-  sun.color.set(0xffd9b0); sun.intensity = 3.2;
-  renderer.toneMappingExposure = 0.62;
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 32, 16), new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uHor: { value: fogCol }, uTop: { value: skyTop }, uSun: { value: sunDir } },
-    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
-    fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
-      void main(){ float h = max(vD.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.55));
-        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 24.0); c += vec3(1.0, 0.85, 0.65) * g * 0.35;
-        gl_FragColor = vec4(c, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
+  // Deep blue sky with light blue horizon (Zwift reference) - brighter for visibility
+  const horizonBlue = new THREE.Color(0xe0f0ff);
+  const deepBlue = new THREE.Color(0x4499ff);
+  
+  // Light fog matched to horizon blue
+  const base = opts.fogBase ?? 800, top = opts.fogTop ?? 1400;
+  scene.fog = new THREE.Fog(horizonBlue, base, top);
+  scene.background = deepBlue; // Deep blue background fallback
+  
+  scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
+  
+  // Warm sunny light (handled by sky-system.js now)
+  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 25), THREE.MathUtils.degToRad(140));
+  sun.color.set(0xfff6e8); sun.intensity = 2.4;
+  renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
+  
+  // Deep blue sky dome (Zwift-style) - renders FIRST behind everything
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, 
+    depthWrite: false,
+    depthTest: true,
+    fog: false,
+    toneMapped: false,
+    uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
+    vertexShader: `
+      varying vec3 vD;
+      void main() {
+        vD = normalize(position);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = p.xyww; // Force to far plane
       }`,
-  }));
-  dome.frustumCulled = false; dome.renderOrder = -1;
+    fragmentShader: `
+      uniform vec3 uHor, uTop, uSun;
+      varying vec3 vD;
+      void main() {
+        float h = clamp(vD.y, 0.0, 1.0);
+        vec3 c = mix(uHor, uTop, pow(h, 0.28));
+        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0);
+        c += vec3(1.0, 0.95, 0.85) * g * 0.15;
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  // Small dome that follows camera
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
+  dome.frustumCulled = false;
+  dome.renderOrder = -1000; // Render first, behind everything
   scene.add(dome);
-  return { dome, fog: scene.fog };
+  
+  // Store reference for camera following
+  window._skyDome = dome;
+  
+  // Add white clouds
+  const clouds = addCloudsToSky(scene, new THREE.Vector3(0, 0, 0), 450000, 6);
+  
+  return { dome, clouds, fog: scene.fog };
 }
 
-// Conifère "blob" comme ForestGenerator (icosaèdre effilé, normales douces, ombre interne → pointe éclairée)
+// Vivid green alpine conifer (Zwift-style, not black silhouette)
 function conifer() {
-  const g = new THREE.IcosahedronGeometry(1, 1);
-  const p = g.attributes.position, n = g.attributes.normal, col = new Float32Array(p.count * 3);
-  const deep = new THREE.Color(0x1d3318), bright = new THREE.Color(0x5d7a37), t = new THREE.Color();
-  for (let i = 0; i < p.count; i++) {
-    const ux = p.getX(i), uy = p.getY(i), uz = p.getZ(i), h = (uy + 1) / 2;
-    const lump = 1 + 0.12 * Math.sin(ux * 7.1 + uz * 5.3 + uy * 3.7);
-    const r = (1 - 0.72 * h) * lump;
-    p.setXYZ(i, ux * r * 2.2, h * 9, uz * r * 2.2);
-    const inv = 1 / Math.hypot(ux, 0.55, uz); n.setXYZ(i, ux * inv, 0.55 * inv, uz * inv);
-    t.copy(deep).lerp(bright, h * 0.9); col.set([t.r, t.g, t.b], i * 3);
+  const positions = [], indices = [], colors = [];
+  const deep = new THREE.Color(0x3a5a38), mid = new THREE.Color(0x4a6b40), bright = new THREE.Color(0x5a7c48);
+  
+  // Trunk (dark brown cylinder)
+  const trunkH = 1.2, trunkR = 0.12;
+  const trunkSegs = 6;
+  for (let i = 0; i <= trunkSegs; i++) {
+    const angle = (i / trunkSegs) * Math.PI * 2;
+    const x = Math.cos(angle) * trunkR, z = Math.sin(angle) * trunkR;
+    positions.push(x, 0, z, x, trunkH, z);
+    const trunkCol = new THREE.Color(0x3a2818);
+    colors.push(trunkCol.r, trunkCol.g, trunkCol.b, trunkCol.r * 0.7, trunkCol.g * 0.7, trunkCol.b * 0.7);
+    if (i < trunkSegs) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, c, b, b, c, d);
+    }
   }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  
+  // Needle tiers (6 tiers, decreasing size toward top)
+  const tiers = 6;
+  let baseIdx = positions.length / 3;
+  for (let tier = 0; tier < tiers; tier++) {
+    const tierY = 0.8 + tier * 1.4;
+    const tierR = (2.2 - tier * 0.32) * (0.9 + Math.random() * 0.2);
+    const tierH = 0.9 - tier * 0.05;
+    const segs = 8;
+    const tipIdx = baseIdx;
+    const col = new THREE.Color().copy(deep).lerp(mid, tier / tiers).lerp(bright, 0.3 + tier * 0.1);
+    positions.push(0, tierY + tierH, 0);
+    colors.push(col.r * 1.2, col.g * 1.2, col.b * 1.2);
+    baseIdx++;
+    for (let i = 0; i <= segs; i++) {
+      const angle = (i / segs) * Math.PI * 2;
+      const x = Math.cos(angle) * tierR, z = Math.sin(angle) * tierR;
+      positions.push(x, tierY, z);
+      const baseCol = new THREE.Color().copy(col).multiplyScalar(0.7 + Math.random() * 0.3);
+      colors.push(baseCol.r, baseCol.g, baseCol.b);
+      if (i < segs) {
+        indices.push(tipIdx, baseIdx + i, baseIdx + i + 1);
+      }
+    }
+    baseIdx += segs + 1;
+  }
+  
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+
+// Realistic leafy tree with clustered canopy (Zwift-style)
+function createLeafyTree() {
+  const positions = [], indices = [], colors = [];
+  let vertexOffset = 0;
+  
+  // Visible trunk (brown)
+  const trunkH = 3.5, trunkR = 0.22;
+  const trunkSegs = 6;
+  const trunkColor = new THREE.Color(0x5a4032);
+  for (let i = 0; i <= trunkSegs; i++) {
+    const angle = (i / trunkSegs) * Math.PI * 2;
+    const x = Math.cos(angle) * trunkR, z = Math.sin(angle) * trunkR;
+    positions.push(x, 0, z, x, trunkH, z);
+    colors.push(trunkColor.r * 0.7, trunkColor.g * 0.7, trunkColor.b * 0.7, trunkColor.r, trunkColor.g, trunkColor.b);
+    if (i < trunkSegs) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  vertexOffset = positions.length / 3;
+  
+  // Clustered canopy spheres (5-7 spheres with noise displacement)
+  const numSpheres = 5 + Math.floor(rand() * 3);
+  const baseGreen = new THREE.Color(0x6a9048);
+  const lightGreen = new THREE.Color(0x7fab58);
+  
+  for (let s = 0; s < numSpheres; s++) {
+    const sphereR = 1.4 + rand() * 0.8;
+    const offsetX = (rand() - 0.5) * 2.2;
+    const offsetY = 3.0 + rand() * 1.8;
+    const offsetZ = (rand() - 0.5) * 2.2;
+    
+    const segments = 8;
+    const color = new THREE.Color().copy(baseGreen).lerp(lightGreen, rand());
+    
+    // Create sphere with noise displacement
+    for (let lat = 0; lat <= segments; lat++) {
+      const theta = (lat / segments) * Math.PI;
+      const sinTheta = Math.sin(theta);
+      const cosTheta = Math.cos(theta);
+      
+      for (let lon = 0; lon <= segments; lon++) {
+        const phi = (lon / segments) * Math.PI * 2;
+        const sinPhi = Math.sin(phi);
+        const cosPhi = Math.cos(phi);
+        
+        // Noise displacement for organic look
+        const noise = (rand() - 0.5) * 0.15;
+        const r = sphereR * (1 + noise);
+        
+        const x = r * sinTheta * cosPhi + offsetX;
+        const y = r * cosTheta + offsetY;
+        const z = r * sinTheta * sinPhi + offsetZ;
+        
+        positions.push(x, y, z);
+        const lightVar = 0.85 + rand() * 0.3;
+        colors.push(color.r * lightVar, color.g * lightVar, color.b * lightVar);
+      }
+    }
+    
+    // Create sphere indices
+    const baseVertex = vertexOffset;
+    for (let lat = 0; lat < segments; lat++) {
+      for (let lon = 0; lon < segments; lon++) {
+        const current = baseVertex + lat * (segments + 1) + lon;
+        const next = current + segments + 1;
+        indices.push(current, next, current + 1);
+        indices.push(current + 1, next, next + 1);
+      }
+    }
+    vertexOffset += (segments + 1) * (segments + 1);
+  }
+  
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
   return g;
 }
 
@@ -286,21 +451,33 @@ export function addForest(scene, track, terrain, max = 14000) {
     list.forEach((it, i) => { q.setFromAxisAngle(up, it.r); sc.setScalar(it.s); v.set(it.x, it.y + yOff * it.s, it.z); im.setMatrixAt(i, m.compose(v, q, sc)); });
     im.castShadow = shadow; scene.add(im);
   };
-  const trunk = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 1 });
-  const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
-  // sapins : un seul InstancedMesh (+ couleur par instance, échelle variée façon exemple)
+  const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
+  const leafyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, flatShading: false });
+  
+  // Sapins (conifers)
   const fim = new THREE.InstancedMesh(conifer(), firMat, firs.length), cc = new THREE.Color();
   firs.forEach((it, i) => {
     q.setFromAxisAngle(up, it.r); const k = it.s; sc.set(k * (0.85 + rand() * 0.3), k * (0.8 + rand() * 0.5), k * (0.85 + rand() * 0.3));
     v.set(it.x, it.y - 0.5, it.z); fim.setMatrixAt(i, m.compose(v, q, sc));
-    fim.setColorAt(i, cc.setHSL(0.27 + rand() * 0.05, 0.25 + rand() * 0.2, 0.75 + rand() * 0.35));
+    fim.setColorAt(i, cc.setHSL(0.28 + rand() * 0.04, 0.42 + rand() * 0.15, 0.38 + rand() * 0.12)); // Vivid green
   });
+  fim.castShadow = true;
+  fim.receiveShadow = true;
   scene.add(fim);
-  inst(new THREE.CylinderGeometry(0.2, 0.3, 3, 5), trunk, leafy, 1.5, false);
-  inst(new THREE.IcosahedronGeometry(2.4, 0), leafMat, leafy, 4.3, false);
-  { const lim = scene.children[scene.children.length - 1], lc = new THREE.Color(); // feuillus (couleurs palette.js)
-    leafy.forEach((_, i) => lim.setColorAt(i, lc.setHex(PALETTE.leafy[Math.floor(rand() * PALETTE.leafy.length)]))); if (lim.instanceColor) lim.instanceColor.needsUpdate = true; }
+  
+  // Leafy trees with realistic canopies
+  const lim = new THREE.InstancedMesh(createLeafyTree(), leafyMat, leafy.length);
+  leafy.forEach((it, i) => {
+    q.setFromAxisAngle(up, it.r);
+    const k = it.s * (0.9 + rand() * 0.3);
+    sc.set(k, k * (0.85 + rand() * 0.3), k);
+    v.set(it.x, it.y - 0.2, it.z);
+    lim.setMatrixAt(i, m.compose(v, q, sc));
+  });
+  lim.castShadow = true;
+  lim.receiveShadow = true;
+  scene.add(lim);
+  
   return firs.length + leafy.length;
 }
 

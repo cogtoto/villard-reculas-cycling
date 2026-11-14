@@ -3,14 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Virtual Bike — Villard-Reculas</title>
+    <title>Virtual Bike — Villard / Normandy</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1020; font-family: system-ui, sans-serif; }
       #hud {
         position: fixed; top: 12px; left: 12px; z-index: 2;
-        color: #e8eefc; background: rgba(10,14,28,.65); padding: 10px 14px;
-        border-radius: 10px; min-width: 180px; backdrop-filter: blur(6px);
-        font-size: 14px; line-height: 1.5;
+        color: #e8eefc; background: rgba(10,14,28,.65); padding: 12px 16px;
+        border-radius: 10px; min-width: 210px; backdrop-filter: blur(6px);
+        font-size: 16px; line-height: 1.5;
       }
       #hud strong { color: #7aa2f7; }
       #hud .zone { display: inline-block; min-width: 2.2em; margin-left: 6px; padding: 0 6px; border-radius: 4px; font-weight: 700; text-align: center; background: #555; color: #fff; }
@@ -23,14 +23,102 @@
       <div>Power: <strong id="watts">—</strong> W <span id="zone" class="zone">—</span></div>
       <div>Your FTP: <strong id="ftp">—</strong> W <span id="pctftp" style="opacity:.75"></span></div>
       <div>Cadence: <strong id="cadence">—</strong> rpm</div>
+      <div id="hr-field" style="display:none">Heart rate: ♥ <strong id="hr-bpm">—</strong> bpm</div>
       <div>Speed: <strong id="speed">—</strong> km/h</div>
       <div>Grade: <strong id="grade">—</strong> % (GPX) · Alt: <strong id="alt">—</strong> m</div>
       <div>Distance: <strong id="dist">—</strong> km</div>
-      <div>Virtual gear: <strong id="gear">—</strong> / 24 <span style="opacity:.6">(+ / −)</span></div>
+      <div>Time: <strong id="ride-time">00:00</strong></div>
       <div>Source: <strong id="source">—</strong></div>
       <div><button id="ble-btn" style="margin:4px 0;padding:4px 8px;border-radius:6px;border:0;background:#2e86de;color:#fff;font-weight:600">Connect HomeTrainer</button></div>
     </div>
-    <div id="hint">Real Villard-Reculas (Oisans) route: descent + climb (Strava GPX, ~26.5 km, 718–1495 m) · mock data by default · BLE when an FTMS/Power sensor is found · +/− = virtual gears (trainer resistance)</div>
+    <div id="coaching-message" style="visibility:hidden;position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:100;background:rgba(10,20,30,0.92);color:#fff;padding:20px 32px;border-radius:16px;font-size:24px;font-weight:600;text-align:center;max-width:700px;box-shadow:0 8px 32px rgba(0,0,0,0.6);backdrop-filter:blur(8px);border:2px solid rgba(255,255,255,0.1);line-height:1.4"></div>
+    <style>
+      @keyframes coaching-fade-in {
+        from { 
+          opacity: 0;
+          transform: translate(-50%, -60%);
+        }
+        to { 
+          opacity: 1;
+          transform: translate(-50%, -50%);
+        }
+      }
+      @keyframes coaching-fade-out {
+        from { 
+          opacity: 1;
+          transform: translate(-50%, -50%);
+        }
+        to { 
+          opacity: 0;
+          transform: translate(-50%, -60%);
+        }
+      }
+      #coaching-message.fade-in {
+        animation: coaching-fade-in 0.4s ease-out;
+      }
+      #coaching-message.fade-out {
+        animation: coaching-fade-out 0.5s ease-out forwards;
+      }
+    </style>
+    <div id="workout-hud" style="display:none;position:fixed;top:12px;right:12px;z-index:2;color:#e8eefc;background:rgba(10,14,28,.75);padding:12px 16px;border-radius:10px;min-width:280px;backdrop-filter:blur(6px);font-size:14px">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px" id="workout-name">Workout</div>
+      <div style="margin:4px 0"><strong id="interval-name">—</strong></div>
+      <div style="margin:4px 0">Target: <strong id="target-watts">—</strong> W · Actual: <strong id="actual-watts">—</strong> W</div>
+      <div style="margin:4px 0">Interval: <strong id="interval-time">—</strong> · Total: <strong id="total-time">—</strong></div>
+      <div style="margin:8px 0 4px;font-size:12px;opacity:.8">Next: <span id="next-interval">—</span></div>
+      <div style="margin:8px 0">
+        <canvas id="workout-profile" width="280" height="40" style="width:100%;height:40px;border-radius:4px"></canvas>
+      </div>
+      <div id="workout-legend" style="margin:4px 0;font-size:10px;line-height:1.25;opacity:.9;max-height:80px;overflow-y:auto;overflow-x:hidden"></div>
+      <button id="stop-test-btn" style="display:none;margin-top:8px;padding:6px 12px;font-size:14px;border:0;border-radius:6px;background:#e74c3c;color:#fff;font-weight:700">Stop Test</button>
+    </div>
+    
+    <!-- FTP Test Confirmation Modal -->
+    <div id="ftp-test-confirm-modal" class="vv-modal" style="display:none">
+      <div class="vv-box" style="max-width:450px;text-align:center">
+        <h2 style="margin:0 0 16px;font-size:24px;color:#e74c3c">⚠️ Power Dropped</h2>
+        <p style="margin:0 0 24px;font-size:16px;line-height:1.5">Your power has dropped near zero. Do you want to end the FTP test now?</p>
+        <div style="display:flex;gap:12px;justify-content:center">
+          <button id="ftp-test-end-btn" class="vv-b" style="background:#e74c3c;font-size:16px;padding:12px 24px">End Test</button>
+          <button id="ftp-test-continue-btn" class="vv-b" style="background:#27ae60;font-size:16px;padding:12px 24px">Continue</button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- FTP Test Results Modal -->
+    <div id="ftp-results-modal" class="vv-modal" style="display:none">
+      <div class="vv-box" style="max-width:500px;text-align:center">
+        <h2 style="margin:0 0 16px;font-size:28px;color:#2e86de">🎉 FTP Test Complete!</h2>
+        
+        <div style="background:rgba(46,134,222,0.12);padding:20px;border-radius:12px;margin:0 0 20px">
+          <div style="font-size:14px;opacity:0.75;margin-bottom:8px">Estimated FTP</div>
+          <div id="ftp-new-value" style="font-size:48px;font-weight:700;color:#2e86de;margin-bottom:4px">—</div>
+          <div style="font-size:13px;opacity:0.7">(75% of best 1-minute power)</div>
+        </div>
+        
+        <div style="display:flex;gap:16px;margin-bottom:20px">
+          <div style="flex:1;background:rgba(255,255,255,0.05);padding:16px;border-radius:8px">
+            <div style="font-size:13px;opacity:0.75;margin-bottom:6px">Previous FTP</div>
+            <div id="ftp-old-value" style="font-size:24px;font-weight:600">—</div>
+          </div>
+          <div style="flex:1;background:rgba(255,255,255,0.05);padding:16px;border-radius:8px">
+            <div style="font-size:13px;opacity:0.75;margin-bottom:6px">Change</div>
+            <div id="ftp-diff-value" style="font-size:24px;font-weight:600">—</div>
+          </div>
+          <div style="flex:1;background:rgba(255,255,255,0.05);padding:16px;border-radius:8px">
+            <div style="font-size:13px;opacity:0.75;margin-bottom:6px">Peak 1-min Power</div>
+            <div id="ftp-peak-value" style="font-size:24px;font-weight:600">—</div>
+          </div>
+        </div>
+        
+        <div style="display:flex;gap:12px;justify-content:center">
+          <button id="ftp-save-btn" class="vv-b" style="background:#27ae60;font-size:16px;padding:12px 24px">✓ Save as my FTP</button>
+          <button id="ftp-keep-btn" class="vv-b" style="background:#55606b;font-size:16px;padding:12px 24px">Keep current FTP</button>
+        </div>
+      </div>
+    </div>
+    
+    <div id="hint">Real GPS routes · Mock data by default · BLE when FTMS/Power sensor found · +/− = virtual gears (trainer resistance) · F = FPS counter · Source: IGN</div>
     <script type="module" src="/main.js"></script>
       <div id="shift-pad">
       <button id="shift-up" aria-label="Gear up">+</button>
@@ -38,14 +126,15 @@
       <button id="shift-down" aria-label="Gear down">−</button>
     </div>
     <style>
-      #shift-pad { position: fixed; right: 16px; bottom: 40px; display: flex; flex-direction: column; align-items: center; gap: 12px; z-index: 20; user-select: none; -webkit-user-select: none; }
-      #shift-pad button { width: 88px; height: 88px; border-radius: 50%; border: 2px solid rgba(255,255,255,.6); background: rgba(20,24,32,.6); color: #fff; font: 700 52px/1 system-ui, sans-serif; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+      #shift-pad { position: fixed; right: 16px; bottom: 40px; display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 20; user-select: none; -webkit-user-select: none; }
+      #shift-pad button { width: 62px; height: 62px; border-radius: 50%; border: 2px solid rgba(255,255,255,.6); background: rgba(20,24,32,.6); color: #fff; font: 700 36px/1 system-ui, sans-serif; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
       #shift-pad button:active { background: rgba(46,134,222,.85); transform: scale(.94); }
-      #shift-gear { min-width: 56px; padding: 4px 10px; border-radius: 10px; background: rgba(20,24,32,.6); color: #fff; font: 700 26px system-ui, sans-serif; text-align: center; }
+      #shift-gear { min-width: 40px; padding: 3px 8px; border-radius: 8px; background: rgba(20,24,32,.6); color: #fff; font: 700 18px system-ui, sans-serif; text-align: center; }
       @media (max-height: 520px) { /* paysage Android : même colonne que la minimap (right 12px, 200px de large) */
-        #shift-pad { flex-direction: row-reverse; justify-content: space-between; right: 12px; bottom: 20px; width: 200px; gap: 0; box-sizing: border-box; }
-        #shift-pad button { width: 64px; height: 64px; font-size: 40px; flex: none; }
-        #shift-gear { min-width: 0; width: 56px; box-sizing: border-box; padding: 4px 0; font-size: 22px; } }
+        #shift-pad { flex-direction: row-reverse; justify-content: space-between; right: 12px; bottom: 20px; width: 140px; gap: 0; box-sizing: border-box; }
+        #shift-pad button { width: 45px; height: 45px; font-size: 28px; flex: none; }
+        #shift-gear { min-width: 0; width: 40px; box-sizing: border-box; padding: 3px 0; font-size: 16px; }
+        #stop-btn { bottom: 55px; } }
     </style>
     <button id="stop-btn" aria-label="Stop ride">■ Stop</button>
     <div id="stop-confirm" class="vv-modal" style="display:none"><div class="vv-box" style="max-width:340px;text-align:center">
@@ -54,12 +143,13 @@
       <button id="stop-no" class="vv-b" style="background:#55606b">Keep riding</button> <button id="stop-yes" class="vv-b" style="background:#e74c3c">Stop &amp; see summary</button>
     </div></div>
     <div id="stats" class="vv-modal" style="display:none"><div class="vv-box" style="max-width:640px;width:100%;max-height:92vh;overflow:auto">
-      <h2 style="margin:0 0 4px">Ride summary</h2><div style="opacity:.7;margin-bottom:6px">Villard-Reculas (Oisans) · ride paused</div>
+      <h2 style="margin:0 0 4px">Ride summary</h2><div id="stats-route" style="opacity:.7;margin-bottom:6px"></div>
       <div id="stats-body"></div>
-      <div style="margin-top:16px;text-align:right"><button id="stats-resume" class="vv-b" style="background:#27ae60">Resume ride</button> <button id="stats-end" class="vv-b" style="background:#e74c3c">End ride</button></div>
+      <div id="stats-garmin-msg" style="margin-top:12px;font-size:13px;opacity:.85"></div>
+      <div style="margin-top:8px;text-align:right"><button id="stats-garmin" class="vv-b" style="background:#2e86de">⬇ Download for Garmin</button> <button id="stats-resume" class="vv-b" style="background:#27ae60">Resume ride</button> <button id="stats-end" class="vv-b" style="background:#e74c3c">End ride</button></div>
     </div></div>
     <style>
-      #stop-btn { position: fixed; left: 16px; bottom: 20px; z-index: 20; padding: 12px 20px; border-radius: 30px; border: 2px solid rgba(255,255,255,.6); background: rgba(192,57,43,.85); color: #fff; font: 700 20px system-ui, sans-serif; touch-action: manipulation; }
+      #stop-btn { position: fixed; left: 16px; bottom: 65px; z-index: 20; padding: 8px 14px; border-radius: 24px; border: 2px solid rgba(255,255,255,.6); background: rgba(192,57,43,.85); color: #fff; font: 700 14px system-ui, sans-serif; touch-action: manipulation; }
       #stop-btn:active { transform: scale(.94); }
       .vv-modal { position: fixed; inset: 0; z-index: 60; align-items: center; justify-content: center; background: rgba(10,20,30,.8); font: 15px system-ui, sans-serif; color: #fff; }
       .vv-box { margin: 12px; padding: 18px 20px; border-radius: 14px; background: #1d2b38; box-shadow: 0 8px 30px #0008; box-sizing: border-box; }
@@ -74,18 +164,84 @@
       .st-zp { width: 72px; text-align: right; opacity: .85; }
     </style>
   <div id="intro" style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(10,20,30,.82);font:16px system-ui,sans-serif;color:#fff">
-  <div style="max-width:460px;margin:16px;padding:22px 24px;border-radius:14px;background:#1d2b38;box-shadow:0 8px 30px #0008">
+  <div style="max-width:520px;margin:16px;padding:22px 24px;border-radius:14px;background:#1d2b38;box-shadow:0 8px 30px #0008">
     <div id="ftp-step">
       <h2 style="margin:0 0 10px">Welcome!</h2>
       <p style="margin:0 0 12px">Enter your FTP (Functional Threshold Power) so power zones match your fitness.</p>
       <label>Your FTP: <input id="ftp-input" type="number" min="50" max="600" step="1" style="width:90px;font-size:18px;padding:4px 6px;border-radius:6px;border:0"> W</label>
+      
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #364a5e">
+        <label style="display:block;margin-bottom:8px;font-size:15px">Graphics Quality:</label>
+        <select id="graphics-quality" style="width:100%;font-size:15px;padding:6px;border-radius:6px;border:0;background:#263847;color:#fff">
+          <option value="low">Low (mobile/weak GPU)</option>
+          <option value="medium">Medium</option>
+          <option value="high">High (HDRI sky, high detail)</option>
+        </select>
+        <div style="margin-top:6px;font-size:13px;opacity:0.7">Auto-detected quality will be set if not changed</div>
+      </div>
+      
       <div style="margin-top:16px;text-align:right"><button id="ftp-ok" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#2e86de;color:#fff;font-weight:700">Continue</button></div>
     </div>
+    <div id="mode-step" style="display:none">
+      <h2 style="margin:0 0 10px">Choose ride mode</h2>
+      <div style="margin:16px 0">
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="free" checked style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Free Ride</div>
+            <div style="opacity:.8;font-size:14px">Ride the route with grade-based simulation and virtual gears</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="ftp-ramp-test" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">FTP Ramp Test</div>
+            <div style="opacity:.8;font-size:14px">~35 min · Ramp +20W/min until failure to estimate FTP</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="sweet-spot" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Sweet Spot</div>
+            <div style="opacity:.8;font-size:14px">~35 min · 3×7 min at 88-93% FTP with active recovery</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="varied-threshold" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Varied Threshold 35' - Coached</div>
+            <div style="opacity:.8;font-size:14px">35 min · Threshold, cadence work, and VO2 with coaching</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="mode" value="explosive-power" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Explosiveness / Power</div>
+            <div style="opacity:.8;font-size:14px">~35 min · 10×20s sprints at 150-200% FTP with recovery</div>
+          </div>
+        </label>
+      </div>
+      <div style="text-align:right"><button id="mode-ok" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#2e86de;color:#fff;font-weight:700">Continue</button></div>
+    </div>
     <div id="route-step" style="display:none">
-      <h2 style="margin:0 0 10px">Villard-Reculas (Oisans)</h2>
-      <p style="margin:0 0 8px">This is a <strong>real route</strong> recorded on Strava: a descent from Villard-Reculas followed by the climb back up.</p>
-      <p style="margin:0 0 8px">~26.5 km · 718–1495 m elevation.</p>
-      <p style="margin:0 0 12px;opacity:.8">Use the big +/− buttons to shift virtual gears — your smart trainer resistance follows the gradient and your gear.</p>
+      <h2 style="margin:0 0 10px">Choose your route</h2>
+      <div style="margin:16px 0">
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="route" value="villard" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Villard-Reculas (Oisans)</div>
+            <div style="opacity:.8;font-size:14px">Descent + climb · ~26.5 km · 718–1495 m</div>
+          </div>
+        </label>
+        <label style="display:flex;align-items:center;padding:12px;margin:8px 0;background:#263847;border-radius:8px;cursor:pointer">
+          <input type="radio" name="route" value="normandy" style="margin-right:12px;width:20px;height:20px">
+          <div style="flex:1">
+            <div style="font-weight:700;margin-bottom:4px">Normandy countryside – Grand-Camp (Eure)</div>
+            <div style="opacity:.8;font-size:14px">~21 km rolling · 120–185 m</div>
+          </div>
+        </label>
+      </div>
+      <p style="margin:12px 0 16px;opacity:.85;font-size:14px">Use the +/− buttons to shift virtual gears — your smart trainer resistance follows the gradient and your gear.</p>
       <div style="text-align:right"><button id="ride-go" style="padding:10px 18px;font-size:16px;border:0;border-radius:8px;background:#27ae60;color:#fff;font-weight:700">Start ride</button></div>
     </div>
   </div>

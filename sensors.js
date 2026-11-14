@@ -9,8 +9,8 @@ const FTMS_CP = '00002ad9-0000-1000-8000-00805f9b34fb'; // Fitness Machine Contr
 const MOCK_AFTER_MS = 3000;
 const dv = (arr) => new DataView(new Uint8Array(arr).buffer);
 
-export function createSensors(onData, { onLog = () => {} } = {}) {
-  let lastData = 0, mode = 'init', ws = null, bleOn = false, trainer = null, simBusy = false, pendingGrade = null;
+export function createSensors(onData, { onLog = () => {}, onShift = () => {} } = {}) {
+  let viaCompanion = -1e9, lastData = 0, mode = 'init', ws = null, bleOn = false, trainer = null, simBusy = false, pendingGrade = null;
   const push = (d, source) => { lastData = performance.now(); mode = source; onData({ ...d, source }); };
   const native = Capacitor.isNativePlatform();
 
@@ -18,7 +18,7 @@ export function createSensors(onData, { onLog = () => {} } = {}) {
   function connectWs() {
     if (native || bleOn) return;
     try { ws = new WebSocket(`ws://${location.hostname}:8787`); } catch { return; }
-    ws.onmessage = (ev) => { if (bleOn) return; const m = JSON.parse(ev.data); push(m, m.source || 'ws'); };
+    ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.type === 'shift') return onShift(m.delta); if (bleOn || (m.type && m.type !== 'telemetry')) return; if (String(m.source || '').startsWith('companion')) viaCompanion = performance.now(); push(m, m.source || 'ws'); };
     ws.onclose = () => { ws = null; setTimeout(connectWs, 2000); };
   }
   connectWs();
@@ -80,7 +80,10 @@ export function createSensors(onData, { onLog = () => {} } = {}) {
     connectBle,
     // FTMS « Set Indoor Bike Simulation » (0x11) : pente en 0,01 %, Crr 0,0001, CdA (cw) 0,01 kg/m
     async setSimulation(gradePct) {
-      if (!trainer) return;
+      if (!trainer) { // home trainer piloté par le companion Android → consigne relayée par le serveur
+        if (ws && ws.readyState === 1 && performance.now() - viaCompanion < 5000) ws.send(JSON.stringify({ type: 'sim', gradePct }));
+        return;
+      }
       if (simBusy) { pendingGrade = gradePct; return; } // une écriture GATT à la fois : on garde la dernière consigne
       simBusy = true;
       try {
@@ -90,6 +93,21 @@ export function createSensors(onData, { onLog = () => {} } = {}) {
           await BleClient.write(trainer, FTMS, FTMS_CP, a);
         }
       } catch (e) { onLog('sim: ' + e.message); } finally { simBusy = false; pendingGrade = null; }
+    },
+    // FTMS « Set Target Power » (0x05) for ERG mode : watts as sint16
+    async setTargetPower(watts) {
+      if (!trainer) { // home trainer via companion → relay via server
+        if (ws && ws.readyState === 1 && performance.now() - viaCompanion < 5000) ws.send(JSON.stringify({ type: 'erg', targetWatts: watts }));
+        return;
+      }
+      if (simBusy) return; // skip if simulation write is in progress
+      simBusy = true;
+      try {
+        const a = new DataView(new ArrayBuffer(3));
+        a.setUint8(0, 0x05); // Set Target Power opcode
+        a.setInt16(1, Math.round(Math.max(0, Math.min(4000, watts))), true); // watts, clamped 0-4000
+        await BleClient.write(trainer, FTMS, FTMS_CP, a);
+      } catch (e) { onLog('erg: ' + e.message); } finally { simBusy = false; }
     },
     sendRoute(gradePct, altM) { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'route', gradePct, altM })); },
   };

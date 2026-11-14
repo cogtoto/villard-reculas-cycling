@@ -1,0 +1,74 @@
+[
+  {
+    "name": "Villard-Reculas",
+    "lat": 45.0914971,
+    "lon": 6.0313171,
+    "osm_id": 34055469,
+    "entry_km": 0,
+    "exit_km": 0.31,
+    "pass": 1
+  },
+  {
+    "name": "Sardonne",
+    "lat": 45.1196024,
+    "lon": 6.0436606,
+    "osm_id": 7344921490,
+    "entry_km": 6.9,
+    "exit_km": 7.23,
+    "pass": 1
+  },
+  {
+    "name": "Le Boulangeard",
+    "lat": 45.1279639,
+    "lon": 6.0473472,
+    "osm_id": 6749142191,
+    "entry_km": 8.91,
+    "exit_km": 9.38,
+    "pass": 1
+  },
+  {
+    "name": "Le Boulangeard",
+    "lat": 45.1279639,
+    "lon": 6.0473472,
+    "osm_id": 6749142191,
+    "entry_km": 10.27,
+    "exit_km": 10.5,
+    "pass": 2
+  },
+  {
+    "name": "La Voute",
+    "lat": 45.1211775,
+    "lon": 6.0335694,
+    "osm_id": 1401425857,
+    "entry_km": 15.72,
+    "exit_km": 16.3,
+    "pass": null
+  },
+  {
+    "name": "Le Boulangeard",
+    "lat": 45.1279639,
+    "lon": 6.0473472,
+    "osm_id": 6749142191,
+    "entry_km": 17.17,
+    "exit_km": 17.62,
+    "pass": 3
+  },
+  {
+    "name": "Sardonne",
+    "lat": 45.1196024,
+    "lon": 6.0436606,
+    "osm_id": 7344921490,
+    "entry_km": 19.31,
+    "exit_km": 19.65,
+    "pass": 2
+  },
+  {
+    "name": "Villard-Reculas",
+    "lat": 45.0914971,
+    "lon": 6.0313171,
+    "osm_id": 34055469,
+    "entry_km": 26.27,
+    "exit_km": 26.6,
+    "pass": 2
+  }
+]
