@@ -112,8 +112,8 @@ export function buildAlpineTerrain(scene, track, dem) {
   const slopeAt = (x, z) => { const e = 20; return Math.hypot(heightAt(x + e, z) - heightAt(x - e, z), heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e); };
   const forestMask = (x, z) => fbm(x * 0.0018 + 40, z * 0.0018 - 13, 4);
 
-  // Zones : prairie / forêt / roche / neige (+ village au départ)
-  const start = pts[0];
+  // Zones : prairie / forêt / roche / neige (+ village at the finish, Villard-Reculas)
+  const finish = pts[pts.length - 1];
   const classify = (x, z) => {
     if (waterAt(x, z) && distTo(x, z) > 12) return 'water';
     if (nearWater(x, z) && heightAt(x, z) < WL + 3 && distTo(x, z) > 8) return 'shore';
@@ -122,7 +122,7 @@ export function buildAlpineTerrain(scene, track, dem) {
     const snowLine = SNOW_LINE + (n - 0.5) * 350 + Math.max(0, s - 0.55) * 700;
     if (y > snowLine || y > SNOW_LINE + 650) return 'snow';
     if (s > 0.9 || y > 2250 + n * 200) return 'rock';
-    if (Math.hypot(x - start.x, z - start.z) < 260 + n * 80) return 'village';
+    if (Math.hypot(x - finish.x, z - finish.z) < 260 + n * 80) return 'village';
     if (y < 2000 && forestMask(x, z) > 0.47 - (y < 1000 ? 0.05 : 0) && distTo(x, z) > 12) return 'forest';
     return 'meadow';
   };

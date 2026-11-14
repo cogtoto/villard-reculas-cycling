@@ -7,6 +7,7 @@ window.THREE = THREE;
 import { createMinimap } from './minimap.js';
 import { setupSky, addClouds, buildRoad } from './decor.js';
 import { addChalets } from './chalets.js';
+import { addFinishChalet } from './finish-chalet.js';
 import { createRider } from './rider.js';
 import { createSensors } from './sensors.js';
 import { addRoadside } from './roadside.js';
@@ -28,8 +29,9 @@ installHeightFog(); // avant toute compilation de shader
 const ROUTES = {
   villard: {
     name: 'Villard-Reculas (Oisans)',
-    description: 'descent + climb',
+    description: 'Climb from the Allemond dam to 7 rue Nouvelle',
     gpx: '/villard-reculas.gpx',
+    loop: false,
     dem: { meta: '/dem-villard.json', bin: '/dem-villard.bin' },
     // realTerrain disabled - using v0.5.11 procedural relief (correct proportions)
     setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
@@ -38,6 +40,10 @@ const ROUTES = {
       addClouds(scene, terrain.center, terrain.span * 3, 3200);
       const ch = addChalets(scene, track, terrain);
       console.log('Chalets:', ch.village, 'village ·', ch.hamlets, 'hamlets');
+      const finishChalet = addFinishChalet(scene, track, terrain);
+      window._finishChalet = finishChalet;
+      console.log('Finish chalet:', finishChalet);
+
       console.log('Roadside:', addRoadside(scene, track, terrain));
       console.log('Trees:', addForest(scene, track, terrain), 'instances');
     },
@@ -76,6 +82,7 @@ let ftpTestRecoveryTarget = 0; // Store ERG target when showing prompt
 const FTP_KEY = 'vv.ftp';
 let FTP_W = Number(localStorage.getItem(FTP_KEY)) || 160; // saved locally, default 160 W
 let rideStarted = false;
+let arrivedFinish = false;
 let rideStartTime = 0; // Wall clock time when ride actually started
 {
   const inp = document.getElementById('ftp-input'), intro = document.getElementById('intro');
@@ -167,6 +174,7 @@ let rideStartTime = 0; // Wall clock time when ride actually started
     
     intro.remove(); 
     rideStarted = true;
+    arrivedFinish = false;
     rideStartTime = 0; // Will be set when scene is ready and first frame with track renders
     S.t0 = Date.now(); // Start timestamp for TCX export
     loadRoute(); // Load the selected route
@@ -565,7 +573,17 @@ function tick() {
     }
     const now = performance.now();
     if (now - lastSent > 1000) { sensors.sendRoute(here.gradePct, here.pos.y); routeGrade = here.gradePct; pushTrainer(); lastSent = now; }
-    if (distanceM >= track.length) distanceM = 0; // boucle : retour au départ (Villard-Reculas)
+    if (distanceM >= track.length) {
+      if (ROUTES[selectedRoute].loop === false) {
+        if (!arrivedFinish) {
+          arrivedFinish = true;
+          showCoachingMessage('Finish — 7 rue Nouvelle', false);
+        }
+        distanceM = track.length;
+      } else {
+        distanceM = 0;
+      }
+    }
     const { pos, dir, gradePct } = sampleTrack(track, distanceM);
     // même hauteur que la chaussée (buildRoad : max tracé / sol sous l'axe et les bords + 0,40 m)
     let roadY = pos.y;
@@ -604,6 +622,11 @@ function tick() {
     }
     camera.position.copy(camPos);
     camera.lookAt(ahead.x, ahead.y + 1, ahead.z);
+    if (window._cameraOverride) {
+      const o = window._cameraOverride;
+      camera.position.set(o.x, o.y, o.z);
+      camera.lookAt(o.lx, o.ly, o.lz);
+    }
     if (sun && sunDirection) {
       sun.position.set(pos.x + sunDirection.x * 100, pos.y + sunDirection.y * 100, pos.z + sunDirection.z * 100);
       sun.target.position.set(pos.x, pos.y, pos.z);
@@ -675,6 +698,20 @@ function teleportTo(wx, wz) {
 
 // Debug console : veloTeleportKm(12.5)
 window.veloTeleportKm = (km) => { if (!track) return; const sm = sampleTrack(track, km * 1000); teleportTo(sm.pos.x, sm.pos.z); };
+window.veloViewFinishChalet = (distance = 20) => {
+  const f = window._finishChalet;
+  if (!f) return false;
+  const fx = Math.sin(f.rot), fz = Math.cos(f.rot);
+  window._cameraOverride = {
+    x: f.x + fx * distance,
+    y: f.y + 5.2,
+    z: f.z + fz * distance,
+    lx: f.x, ly: f.y + 3.8, lz: f.z
+  };
+  return true;
+};
+window.veloClearView = () => { window._cameraOverride = null; };
+
 
 // --- Chargement GPX (appelé après sélection de route) ---
 function loadRoute() {

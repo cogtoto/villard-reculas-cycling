@@ -224,17 +224,23 @@ export function addChalets(scene, track, terrain, { village = 30, hamlets = 50 }
     });
   };
   
-  // Village around spawn
-  const spawn = pts[0];
+  // Village around the finish (Villard-Reculas), leaving a clear patch for the hero chalet
+  const villageCenter = pts[pts.length - 1];
+  const finish = pts[pts.length - 1];
+  const originalIsOk = isOk;
+  const isOkVillage = (x, z) => {
+    if ((x - finish.x) ** 2 + (z - finish.z) ** 2 < 45 * 45) return false;
+    return originalIsOk(x, z);
+  };
   for (let attempts = 0; attempts < 2000 && list.length < village; attempts++) {
     const angle = rand() * Math.PI * 2;
-    const r = 20 + rand() * 200;
-    const x = spawn.x + Math.cos(angle) * r;
-    const z = spawn.z + Math.sin(angle) * r;
-    if (isOk(x, z)) addChalet(x, z);
+    const r = 25 + rand() * 220;
+    const x = villageCenter.x + Math.cos(angle) * r;
+    const z = villageCenter.z + Math.sin(angle) * r;
+    if (isOkVillage(x, z)) addChalet(x, z);
   }
   
-  console.log(`Placed ${list.length} chalets in starting village`);
+  console.log(`Placed ${list.length} chalets in the finish village`);
   
   // Hamlets along route
   const villageCount = list.length;

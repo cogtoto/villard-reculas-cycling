@@ -7,10 +7,10 @@
 Choose between two real GPS routes:
 
 ### 1. Villard-Reculas (Oisans, Alps)
-- **Type**: Mountain descent + climb
-- **Distance**: ~26.5 km
-- **Elevation**: 718–1495 m
-- **Scenery**: Alpine chalets, fir forests, snow-capped peaks
+- **Type**: Mountain climb, Barrage du Verney (Allemond) to 7 rue Nouvelle
+- **Distance**: 10.9 km
+- **Elevation**: 777–1495 m (721 m of climbing)
+- **Scenery**: Alpine chalets, fir forests, snow-capped peaks, finish chalet at 7 rue Nouvelle
 
 ### 2. Normandy Countryside – Grand-Camp (Eure)
 - **Type**: Rolling countryside
