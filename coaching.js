@@ -11,8 +11,8 @@ export function getCoachingMessage(workout, current, actualWatts, elapsedInInter
   
   // Message categories
   const messages = {
-    // Interval start messages (explain purpose)
-    intervalStart: getIntervalStartMessage(interval, workout),
+    // Interval start messages (use custom message if defined, else generate)
+    intervalStart: interval.coachingMessage || getIntervalStartMessage(interval, workout),
     
     // Performance feedback
     performance: getPerformanceMessage(performance, interval),

@@ -275,6 +275,113 @@ export function getWorkoutProfile(workout, userFTP) {
   });
 }
 
+// Varied Threshold: Coached 35-minute session with threshold, cadence work, and VO2
+export function createVariedThresholdWorkout(userFTP) {
+  const intervals = [];
+  
+  // Segment 1: Warm-up (3:00 total)
+  intervals.push({
+    type: 'warmup',
+    duration: 90, // 1:30
+    target: 95,
+    cadence: 85,
+    name: 'Warm-up Z2',
+    coachingMessage: "Wake up the legs. Zone 2 = endurance: you can talk easily, this is where your aerobic engine is built."
+  });
+  intervals.push({
+    type: 'warmup',
+    duration: 90, // 1:30
+    target: 120,
+    cadence: 85,
+    name: 'Warm-up',
+    coachingMessage: null // No message for 2nd warmup
+  });
+  
+  // Segment 2: Cadence work (3:00 total)
+  for (let i = 0; i < 3; i++) {
+    intervals.push({
+      type: 'work',
+      duration: 30,
+      target: 110,
+      cadence: 100,
+      name: `Cadence ${i + 1}/3 - fast`,
+      coachingMessage: i === 0 ? "Spin the legs fast without forcing: it will help you hold 75-80 rpm on Villard-Reculas." : null
+    });
+    intervals.push({
+      type: 'work',
+      duration: 30,
+      target: 95,
+      cadence: 85,
+      name: `Cadence ${i + 1}/3 - recovery`,
+      coachingMessage: null
+    });
+  }
+  
+  // Segment 3: Threshold intervals (21:30 total)
+  for (let i = 0; i < 4; i++) {
+    intervals.push({
+      type: 'work',
+      duration: 240, // 4:00
+      target: 158,
+      cadence: 82,
+      name: `Threshold ${i + 1}/4`,
+      coachingMessage: i < 3 
+        ? "You're at threshold, zone 4: the power you could hold about an hour all-out. Only a few words now, that's normal. Stay steady. Every rep raises your FTP."
+        : "Last one! Your 162 W for 20 min on Villard-Reculas proves you're improving."
+    });
+    
+    // Recovery after each threshold
+    const isLastRecovery = (i === 3);
+    intervals.push({
+      type: 'recovery',
+      duration: isLastRecovery ? 90 : 80, // Last recovery is 1:30, others 1:20
+      target: 100,
+      cadence: 85,
+      name: 'Recovery',
+      coachingMessage: "Well done! Breathe, relax your shoulders."
+    });
+  }
+  
+  // Segment 4: VO2 max intervals (4:30 total)
+  for (let i = 0; i < 3; i++) {
+    intervals.push({
+      type: 'work',
+      duration: 45,
+      target: 175,
+      cadence: 85,
+      name: `VO2 ${i + 1}/3`,
+      coachingMessage: i === 0 ? "Zone 5, VO2 max: breathing hard, but short. This is what helps you surge on climbs. Stay seated, your hamstring will thank you." : null
+    });
+    intervals.push({
+      type: 'recovery',
+      duration: 45,
+      target: 95,
+      cadence: 85,
+      name: 'VO2 recovery',
+      coachingMessage: null
+    });
+  }
+  
+  // Segment 5: Cool-down (3:00 total)
+  intervals.push({
+    type: 'cooldown',
+    duration: 180, // 3:00
+    targetStart: 110,
+    targetEnd: 80,
+    name: 'Cool-down',
+    coachingMessage: "Back to zone 1, your heart rate comes down. Great session, 16 minutes at threshold!"
+  });
+  
+  return {
+    id: 'varied-threshold',
+    name: 'Varied Threshold 35\' - Coached',
+    description: 'Threshold, cadence work, and VO2 with coaching',
+    totalDuration: intervals.reduce((sum, i) => sum + i.duration, 0),
+    intervals,
+    isTest: false
+  };
+}
+
 // Format time as MM:SS
 export function formatTime(seconds) {
   const m = Math.floor(seconds / 60);

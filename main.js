@@ -13,7 +13,7 @@ import { addRoadside } from './roadside.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
 import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
 import { addNormandyChurches } from './normandy-churches.js';
-import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
+import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, createVariedThresholdWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, formatTime } from './workouts.js';
 import { buildTcx, saveFile, toLatLon } from './export.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
@@ -136,6 +136,8 @@ let rideStartTime = 0; // Wall clock time when ride actually started
         currentWorkout = createFTPRampTest(FTP_W);
       } else if (selectedMode === 'sweet-spot') {
         currentWorkout = createSweetSpotWorkout(FTP_W);
+      } else if (selectedMode === 'varied-threshold') {
+        currentWorkout = createVariedThresholdWorkout(FTP_W);
       } else if (selectedMode === 'explosive-power') {
         currentWorkout = createExplosiveWorkout(FTP_W);
       }
