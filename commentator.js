@@ -1,5 +1,6 @@
 // Le Commentateur — optional live race commentary (Web Speech API, French).
-// Spoken only; no banners. Lightweight: no audio files, no network.
+// Spoken only; no banners. Lightweight: no bundled audio files.
+// Prefers a local Piper voice via the companion /tts endpoint, else Web Speech.
 // Persona: passionate, gouailleur French cycling commentator. Rider: Vincent.
 
 export const COMMENTATOR_KEY = 'vv.commentator';
@@ -577,19 +578,53 @@ export function pickFrenchVoice(voices) {
   return bestS >= 0 ? best : null;
 }
 
-export function createSpeechOutput({ lang = 'fr-FR', rate = 1.15, pitch = 1.05, getSynth } = {}) {
+export const TTS_PORT = 8787;
+
+export function ttsBaseUrl(hostname, port = TTS_PORT) {
+  const host = hostname || (typeof location !== 'undefined' && location.hostname) || '127.0.0.1';
+  return `http://${host}:${port}`;
+}
+
+export function ttsStatusUrl(hostname, port = TTS_PORT) {
+  return `${ttsBaseUrl(hostname, port)}/tts/status`;
+}
+
+export function ttsAudioUrl(hostname, text, port = TTS_PORT) {
+  return `${ttsBaseUrl(hostname, port)}/tts?text=${encodeURIComponent(String(text || '').trim())}`;
+}
+
+export function createSpeechOutput({ lang = 'fr-FR', rate = 1.15, pitch = 1.05, getSynth, ttsBase, fetchImpl, AudioCtor } = {}) {
   const synthOf = () => {
     if (getSynth) return getSynth();
     if (typeof window !== 'undefined' && window.speechSynthesis) return window.speechSynthesis;
     return null;
   };
+  const fetchFn = fetchImpl || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
+  const AudioFn = AudioCtor || (typeof Audio !== 'undefined' ? Audio : null);
 
-  let current = null;
+  const baseOf = () => {
+    if (ttsBase) return String(ttsBase).replace(/\/$/, '');
+    if (typeof location !== 'undefined' && location.hostname) return ttsBaseUrl(location.hostname);
+    return '';
+  };
 
-  const speak = (text, { onend, onstart } = {}) => {
+  let currentUtterance = null;
+  let currentAudio = null;
+  let token = 0;
+  let piperOk = null; // null = unknown
+
+  const stopAudio = () => {
+    if (!currentAudio) return;
+    const a = currentAudio;
+    currentAudio = null;
+    try { a.onended = null; a.onerror = null; a.onplay = null; } catch (_) { /* ignore */ }
+    try { a.pause(); a.removeAttribute && a.removeAttribute('src'); a.src = ''; } catch (_) { /* ignore */ }
+  };
+
+  const speakBrowser = (text, { onend, onstart } = {}, myToken) => {
     const synth = synthOf();
     if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
-      if (onend) onend();
+      if (myToken === token && onend) onend();
       return false;
     }
     try { synth.cancel(); } catch (_) { /* ignore */ }
@@ -599,16 +634,90 @@ export function createSpeechOutput({ lang = 'fr-FR', rate = 1.15, pitch = 1.05, 
     u.pitch = pitch;
     const voice = pickFrenchVoice(synth.getVoices ? synth.getVoices() : []);
     if (voice) u.voice = voice;
-    u.onend = () => { if (current === u) current = null; if (onend) onend(); };
-    u.onerror = () => { if (current === u) current = null; if (onend) onend(); };
+    u.onend = () => { if (currentUtterance === u) currentUtterance = null; if (myToken === token && onend) onend(); };
+    u.onerror = () => { if (currentUtterance === u) currentUtterance = null; if (myToken === token && onend) onend(); };
     if (onstart) u.onstart = onstart;
-    current = u;
+    currentUtterance = u;
     synth.speak(u);
     return true;
   };
 
+  const probePiper = async () => {
+    const base = baseOf();
+    if (!base || !fetchFn) { piperOk = false; return false; }
+    try {
+      const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const t = setTimeout(() => { try { ctrl && ctrl.abort(); } catch (_) { /* ignore */ } }, 900);
+      const r = await fetchFn(`${base}/tts/status`, ctrl ? { signal: ctrl.signal } : {});
+      clearTimeout(t);
+      if (!r.ok) { piperOk = false; return false; }
+      const j = await r.json();
+      piperOk = !!(j && j.ok);
+      return piperOk;
+    } catch (_) {
+      piperOk = false;
+      return false;
+    }
+  };
+
+  const speakPiper = async (text, { onend, onstart } = {}, myToken) => {
+    const base = baseOf();
+    const r = await fetchFn(`${base}/tts?text=${encodeURIComponent(text)}`);
+    if (!r.ok) throw new Error(`tts HTTP ${r.status}`);
+    if (myToken !== token) { if (onend) onend(); return false; }
+    const blob = await r.blob();
+    if (myToken !== token) { if (onend) onend(); return false; }
+    if (!AudioFn) throw new Error('no Audio');
+    const url = URL.createObjectURL(blob);
+    const audio = new AudioFn(url);
+    currentAudio = audio;
+    const finish = (ended) => {
+      try { URL.revokeObjectURL(url); } catch (_) { /* ignore */ }
+      if (currentAudio === audio) currentAudio = null;
+      if (ended && myToken === token && onend) onend();
+    };
+    audio.onended = () => finish(true);
+    audio.onerror = () => finish(true);
+    if (onstart) audio.onplay = onstart;
+    const played = audio.play();
+    if (played && typeof played.then === 'function') await played;
+    if (myToken !== token) {
+      stopAudio();
+      finish(false);
+      return false;
+    }
+    return true;
+  };
+
+  const speak = (text, cbs = {}) => {
+    const myToken = ++token;
+    stopAudio();
+    const synth = synthOf();
+    if (synth) try { synth.cancel(); } catch (_) { /* ignore */ }
+
+    const go = async () => {
+      if (piperOk === null) await probePiper();
+      if (myToken !== token) { if (cbs.onend) cbs.onend(); return; }
+      if (piperOk) {
+        try {
+          await speakPiper(text, cbs, myToken);
+          return;
+        } catch (_) {
+          // Fall back for this line; probe again next time in case Piper comes up later.
+          piperOk = null;
+        }
+      }
+      if (myToken !== token) { if (cbs.onend) cbs.onend(); return; }
+      speakBrowser(text, cbs, myToken);
+    };
+    go();
+    return true;
+  };
+
   const cancel = () => {
-    current = null;
+    token += 1;
+    stopAudio();
+    currentUtterance = null;
     const synth = synthOf();
     if (synth) try { synth.cancel(); } catch (_) { /* ignore */ }
   };
@@ -616,7 +725,15 @@ export function createSpeechOutput({ lang = 'fr-FR', rate = 1.15, pitch = 1.05, 
   const primeVoices = () => {
     const synth = synthOf();
     if (synth && synth.getVoices) synth.getVoices();
+    if (piperOk === null) probePiper();
   };
 
-  return { speak, cancel, primeVoices, pickVoice: () => pickFrenchVoice((synthOf() && synthOf().getVoices && synthOf().getVoices()) || []) };
+  return {
+    speak,
+    cancel,
+    primeVoices,
+    probePiper,
+    piperStatus: () => piperOk,
+    pickVoice: () => pickFrenchVoice((synthOf() && synthOf().getVoices && synthOf().getVoices()) || [])
+  };
 }

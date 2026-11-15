@@ -2,11 +2,22 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import { createBleSource } from './ble.js';
 import { steadySpeed } from '../physics.js';
+import { handleTtsRequest, getTtsEngine } from './tts.js';
 
 const PORT = 8787;
 const USE_BLE = process.env.VELO_BLE !== '0';
 
-const server = http.createServer((_req, res) => {
+const server = http.createServer((req, res) => {
+  const url = new URL(req.url || '/', 'http://127.0.0.1');
+  if (url.pathname === '/tts' || url.pathname.startsWith('/tts/')) {
+    handleTtsRequest(req, res, url).catch((err) => {
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: err.message || String(err) }));
+      }
+    });
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('velo-virtuel sensor server\n');
 });
@@ -120,4 +131,12 @@ wss.on('connection', (ws) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Sensor server ws://0.0.0.0:${PORT} (companion: ws://<PC-IP>:${PORT}) (BLE=${USE_BLE ? 'on' : 'off'}, mock fallback)`);
+  const tts = getTtsEngine();
+  const st = tts.status();
+  if (st.ok) {
+    console.log(`[tts] Piper ready voice=${st.voice} length_scale=${st.lengthScale}`);
+    tts.startWarmup();
+  } else {
+    console.warn('[tts] Piper unavailable, game will fall back to speechSynthesis:', st.reason);
+  }
 });
