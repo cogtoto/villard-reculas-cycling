@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 import { PALETTE } from './palette.js';
 import { addCloudsToSky } from './clouds.js';
-import { buildRoadIndex, clampHeightToRoadCorridor, TERRAIN_CELL_SIZE, VEG_CLEARANCE } from './road-corridor.js';
+import { buildRoadIndex, fitHeightToRoadCorridor, TERRAIN_CELL_SIZE, VEG_CLEARANCE, ROAD_BED_CELL, ROAD_BLEND_END } from './road-corridor.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -88,27 +88,96 @@ export function createAlpineHeightField(track, dem, { cellSize = TERRAIN_CELL_SI
     const x = pos.getX(i) + c.x, z = pos.getZ(i) + c.z;
     let y = demAt(x, z);
     const nr = nearest(x, z, 1);
-    // Carve under every nearby road sample so hairpins cannot bury the ribbon
-    // (a 40 m grid used to interpolate grass through the tarmac).
-    y = clampHeightToRoadCorridor(y, x, z, roadIndex);
+    // Fit (raise or lower) to the road minus a small epsilon, then blend
+    // to natural ground over a short shoulder — no deep trench.
+    y = fitHeightToRoadCorridor(y, x, z, roadIndex);
     if (nr.d > 25 && waterAt(x, z)) y = Math.min(y, WL - 4); // fond du lac sous la surface
     pos.setY(i, y);
   }
   geo.computeVertexNormals();
-  const heightAt = (x, z) => {
+  const meshHeightAt = (x, z) => {
     const gx = ((x - x0) / W) * SX, gz = ((z - z0) / H) * SZ;
     const i = Math.max(0, Math.min(SX - 1, Math.floor(gx))), j = Math.max(0, Math.min(SZ - 1, Math.floor(gz)));
     const fx = gx - i, fz = gz - j, Y = (a, b) => pos.getY(b * (SX + 1) + a);
     return (Y(i, j) * (1 - fx) + Y(i + 1, j) * fx) * (1 - fz) + (Y(i, j + 1) * (1 - fx) + Y(i + 1, j + 1) * fx) * fz;
   };
+  // Query height uses the continuous corridor fit so the 20 m mesh cannot
+  // leave the ribbon perched or buried between vertices.
+  const heightAt = (x, z) => fitHeightToRoadCorridor(meshHeightAt(x, z), x, z, roadIndex);
   const slopeAt = (x, z) => { const e = 20; return Math.hypot(heightAt(x + e, z) - heightAt(x - e, z), heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e); };
   const forestMask = (x, z) => fbm(x * 0.0018 + 40, z * 0.0018 - 13, 4);
 
   return {
     pts, box, c, size, minY, nearest, distTo, demAt, toLL, toXZ, M, HD,
     waterAt, nearWater, wMask, WL, x0, z0, W, H, CS, SX, SZ, geo, pos,
-    heightAt, slopeAt, forestMask, roadIndex
+    heightAt, meshHeightAt, slopeAt, forestMask, roadIndex
   };
+}
+
+
+// Fine (4 m) grass bed along the road, using the same terrain texture.
+// This carries the 6 m flush band and 8 m blend at a resolution the 20 m
+// alpine mesh cannot represent, so the ribbon does not look perched or trenched.
+export function buildRoadCorridorMesh(field, texture) {
+  const { roadIndex, demAt, meshHeightAt, x0, z0, W, H } = field;
+  if (!roadIndex || !texture) return null;
+  const CS = ROAD_BED_CELL;
+  const radius = ROAD_BLEND_END;
+  const r = Math.ceil(radius / CS);
+  const cells = new Set();
+  for (const p of roadIndex.dense) {
+    const cx = Math.round(p.x / CS), cz = Math.round(p.z / CS);
+    const r2 = (r + 0.5) * (r + 0.5);
+    for (let i = -r; i <= r; i++) {
+      for (let j = -r; j <= r; j++) {
+        if (i * i + j * j > r2) continue;
+        cells.add(`${cx + i},${cz + j}`);
+      }
+    }
+  }
+  const src = demAt || meshHeightAt;
+  const posMap = new Map();
+  for (const key of cells) {
+    const comma = key.indexOf(',');
+    const ix = +key.slice(0, comma), iz = +key.slice(comma + 1);
+    const x = ix * CS, z = iz * CS;
+    const y = fitHeightToRoadCorridor(src(x, z), x, z, roadIndex);
+    posMap.set(key, { x, y, z, ix, iz });
+  }
+  const positions = [], uvs = [], idx = [];
+  const vertIndex = new Map();
+  const vert = (key) => {
+    if (vertIndex.has(key)) return vertIndex.get(key);
+    const p = posMap.get(key);
+    const i = positions.length / 3;
+    positions.push(p.x, p.y, p.z);
+    uvs.push((p.x - x0) / W, 1 - (p.z - z0) / H);
+    vertIndex.set(key, i);
+    return i;
+  };
+  for (const p of posMap.values()) {
+    const k10 = `${p.ix + 1},${p.iz}`, k01 = `${p.ix},${p.iz + 1}`, k11 = `${p.ix + 1},${p.iz + 1}`;
+    if (!posMap.has(k10) || !posMap.has(k01) || !posMap.has(k11)) continue;
+    const a = vert(`${p.ix},${p.iz}`), b = vert(k10), c = vert(k01), d = vert(k11);
+    idx.push(a, c, b, b, c, d);
+  }
+  if (!idx.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 1,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -2
+  }));
+  mesh.receiveShadow = true;
+  mesh.renderOrder = 1;
+  mesh.frustumCulled = false;
+  return mesh;
 }
 
 export function buildAlpineTerrain(scene, track, dem) {
@@ -168,6 +237,8 @@ export function buildAlpineTerrain(scene, track, dem) {
   const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map, roughness: 1 }));
   land.position.set(c.x, 0, c.z); land.receiveShadow = true;
   scene.add(land);
+  const bed = buildRoadCorridorMesh(field, map);
+  if (bed) scene.add(bed);
 
   // Surface de l'eau : cellules MNT du lac (dilatées d'1 cellule, les rives cachent les bords)
   {

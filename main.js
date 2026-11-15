@@ -820,6 +820,18 @@ window.veloOverhead = (height = 35) => {
   };
   return true;
 };
+window.veloSideView = (height = 2.4, dist = 16, sign = 1) => {
+  if (!track) return false;
+  const sm = sampleTrack(track, distanceM);
+  const nx = -sm.dir.z * sign, nz = sm.dir.x * sign;
+  window._cameraOverride = {
+    x: sm.pos.x + nx * dist - sm.dir.x * 3,
+    y: sm.pos.y + height,
+    z: sm.pos.z + nz * dist - sm.dir.z * 3,
+    lx: sm.pos.x, ly: sm.pos.y + 0.4, lz: sm.pos.z
+  };
+  return true;
+};
 
 
 // --- Chargement GPX (appelé après sélection de route) ---

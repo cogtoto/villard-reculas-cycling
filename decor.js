@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { makeGeo } from './geo.js';
-import { ROAD_Y_LIFT, ROAD_WIDTH } from './road-corridor.js';
+import { ROAD_Y_LIFT, ROAD_VERGE_LIFT, ROAD_WIDTH } from './road-corridor.js';
 
 // ---------- utilitaires ----------
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
@@ -432,30 +432,35 @@ export function buildRoad(scene, track, width = ROAD_WIDTH, terrain = null, useR
     return g;
   };
   const h = width / 2, side = THREE.DoubleSide;
-  // Road lifted above the carved terrain, with a strong depth bias so
-  // interpolation or z-fighting cannot bury the ribbon in the grass.
+  // Road sits almost flush with the fitted terrain. A few centimetres of
+  // lift plus a strong depth bias keep grass from covering the tarmac
+  // without a visible embankment.
   const road = new THREE.Mesh(ribbon(h, -h, ROAD_Y_LIFT, 6), new THREE.MeshStandardMaterial({ 
     map: asphalt, 
     roughness: 0.92, 
     metalness: 0, 
     side, 
     polygonOffset: true, 
-    polygonOffsetFactor: -6, 
-    polygonOffsetUnits: -8 
+    polygonOffsetFactor: -8, 
+    polygonOffsetUnits: -12 
   }));
-  road.receiveShadow = true; road.frustumCulled = false; road.renderOrder = 2; scene.add(road);
+  road.receiveShadow = true; road.frustumCulled = false; road.renderOrder = 3; scene.add(road);
   
   // Grass verges (no grey shoulders, no white edge lines per user preference)
   if (!useRealTerrain) {
     const vergeMat = new THREE.MeshStandardMaterial({ 
-      color: 0x7c8a50, 
+      color: 0x7fb856, 
       roughness: 1, 
       side, 
       polygonOffset: true, 
-      polygonOffsetFactor: -2, 
-      polygonOffsetUnits: -2 
+      polygonOffsetFactor: -3, 
+      polygonOffsetUnits: -4 
     });
-    scene.add(new THREE.Mesh(ribbon(h + 0.6, h, 0.08, 6), vergeMat), new THREE.Mesh(ribbon(-h, -h - 0.6, 0.08, 6), vergeMat));
+    const vergeA = new THREE.Mesh(ribbon(h + 0.9, h, ROAD_VERGE_LIFT, 6), vergeMat);
+    const vergeB = new THREE.Mesh(ribbon(-h, -h - 0.9, ROAD_VERGE_LIFT, 6), vergeMat);
+    vergeA.renderOrder = vergeB.renderOrder = 2;
+    vergeA.receiveShadow = vergeB.receiveShadow = true;
+    scene.add(vergeA, vergeB);
   }
   
   // NO road markings (no center line, no edge lines per user preference for alpine roads)
