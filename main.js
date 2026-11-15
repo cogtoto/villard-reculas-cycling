@@ -19,6 +19,7 @@ import { buildTcx, saveFile, toLatLon } from './export.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
 import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
+import { createCommentatorEngine, createSpeechOutput, isCommentatorEnabled, setCommentatorEnabled } from './commentator.js';
 import { graphicsSettings, fpsCounter } from './graphics-settings.js';
 import { setupLighting } from './sky-system.js';
 import { RealTerrainSystem } from './real-terrain.js';
@@ -172,6 +173,7 @@ let rideStartTime = 0; // Wall clock time when ride actually started
       if (gearLine) gearLine.style.display = 'none';
     }
     
+    unlockSpeech();
     intro.remove(); 
     rideStarted = true;
     arrivedFinish = false;
@@ -182,6 +184,97 @@ let rideStartTime = 0; // Wall clock time when ride actually started
 }
 document.getElementById('ftp').textContent = FTP_W;
 const zoneFor = (w) => getPowerZoneFromWatts(w || 0, FTP_W);
+
+const commentatorEngine = createCommentatorEngine();
+const commentatorSpeech = createSpeechOutput({ lang: 'fr-FR', rate: 1.15, pitch: 1.05 });
+let commentatorOn = isCommentatorEnabled();
+commentatorEngine.setEnabled(commentatorOn);
+commentatorSpeech.primeVoices();
+if (typeof speechSynthesis !== 'undefined') {
+  speechSynthesis.addEventListener('voiceschanged', () => commentatorSpeech.primeVoices());
+}
+
+function applyCommentatorUi() {
+  const modeBtn = document.getElementById('commentator-mode-btn');
+  const hudBtn = document.getElementById('commentator-btn');
+  if (modeBtn) {
+    modeBtn.textContent = commentatorOn ? 'On' : 'Off';
+    modeBtn.style.background = commentatorOn ? '#1e8449' : '#555';
+  }
+  if (hudBtn) {
+    hudBtn.textContent = commentatorOn ? 'Commentator: On' : 'Commentator: Off';
+    hudBtn.style.background = commentatorOn ? '#1e8449' : '#555';
+    hudBtn.setAttribute('aria-pressed', commentatorOn ? 'true' : 'false');
+  }
+}
+
+function unlockSpeech() {
+  const s = typeof speechSynthesis !== 'undefined' ? speechSynthesis : null;
+  if (!s) return;
+  try { s.resume(); } catch (_) { /* ignore */ }
+  try {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    u.rate = 1;
+    u.lang = 'fr-FR';
+    s.speak(u);
+    s.cancel();
+  } catch (_) { /* ignore */ }
+}
+
+function setCommentatorOn(on) {
+  commentatorOn = setCommentatorEnabled(!!on);
+  commentatorEngine.setEnabled(commentatorOn);
+  if (!commentatorOn) {
+    commentatorSpeech.cancel();
+    commentatorEngine.onSpeechEnd();
+  } else {
+    unlockSpeech();
+  }
+  applyCommentatorUi();
+}
+
+document.getElementById('commentator-mode-btn')?.addEventListener('click', () => setCommentatorOn(!commentatorOn));
+document.getElementById('commentator-btn')?.addEventListener('click', () => setCommentatorOn(!commentatorOn));
+applyCommentatorUi();
+
+let lastCommentAt = 0;
+function maybeComment(now, gradePct) {
+  if (!rideStarted || rideStartTime === 0) return;
+  if (now - lastCommentAt < 250) return;
+  lastCommentAt = now;
+  const zn = zoneFor(state.watts || 0);
+  let intervalIndex = -1, interval = null;
+  if (currentWorkout && workoutStartTime > 0) {
+    const elapsed = (now - workoutStartTime) / 1000;
+    const current = getCurrentInterval(currentWorkout, elapsed);
+    if (current) {
+      intervalIndex = current.index;
+      interval = { ...current.interval, target: current.currentTarget };
+    }
+  }
+  const hrFresh = state.hr != null && Number(state.hr) > 0 && (Date.now() - lastHrUpdate < 30000);
+  const ev = commentatorEngine.update({
+    t: now,
+    watts: state.watts || 0,
+    cadence: state.cadence || 0,
+    gradePct,
+    distanceM,
+    trackLength: track ? track.length : 0,
+    zone: zn.z,
+    hr: hrFresh ? Number(state.hr) : null,
+    intervalIndex,
+    interval,
+    ftp: FTP_W,
+    routeId: selectedRoute,
+    rideStarted: rideStarted && rideStartTime > 0,
+    arrivedFinish
+  });
+  if (ev && ev.line && commentatorOn) {
+    commentatorSpeech.speak(ev.line, { onend: () => commentatorEngine.onSpeechEnd() });
+  }
+}
+
 const hud = {
   watts: document.getElementById('watts'),
   cadence: document.getElementById('cadence'),
@@ -396,6 +489,8 @@ function showStats() {
     rideStarted = false;
     pauseTime = performance.now();
     pausedElapsed = (pauseTime - rideStartTime) / 1000;
+    commentatorSpeech.cancel();
+    commentatorEngine.onSpeechEnd();
     confirmBox.style.display = 'flex';
   };
   $('stop-no').onclick = () => {
@@ -606,6 +701,7 @@ function tick() {
     hud.grade.textContent = gradePct.toFixed(1);
     hud.alt.textContent = Math.round(pos.y); // altitude GPX (lissée) à la position actuelle
     if (hud.dist) hud.dist.textContent = `${(distanceM / 1000).toFixed(2)} / ${(track.length / 1000).toFixed(1)}`;
+    maybeComment(now, gradePct);
     // Caméra chase lissée
     const ahead = sampleTrack(track, distanceM + 15).pos;
     tmp.set(pos.x - dir.x * 9, pos.y + 4, pos.z - dir.z * 9);
