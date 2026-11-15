@@ -3,11 +3,11 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  DEFAULT_LENGTH_SCALE, MAX_TEXT_CHARS,
+  DEFAULT_LENGTH_SCALE, DEFAULT_NOISE_SCALE, DEFAULT_NOISE_W, MAX_TEXT_CHARS,
   normalizeTtsText, ttsCacheKey, parseTtsTextFromUrl, ttsEndpointUrl,
   warmupLines, corsHeaders, createTtsEngine
 } from '../server/tts.js';
-import { LINES, ttsAudioUrl, ttsStatusUrl, ttsBaseUrl, createSpeechOutput } from '../commentator.js';
+import { LINES, ttsAudioUrl, ttsStatusUrl, ttsBaseUrl, createSpeechOutput, PIPER_PLAYBACK_RATE } from '../commentator.js';
 
 let passed = 0, failed = 0;
 
@@ -34,7 +34,10 @@ async function run(name, fn) {
 console.log('Testing Piper TTS helpers...\n');
 
 await run('default length_scale is slightly faster than 1.0', () => {
-  assertEquals(DEFAULT_LENGTH_SCALE, 0.9);
+  assertEquals(DEFAULT_LENGTH_SCALE, 0.8);
+  assertEquals(DEFAULT_NOISE_SCALE, 0.8);
+  assertEquals(DEFAULT_NOISE_W, 0.95);
+  assertEquals(PIPER_PLAYBACK_RATE, 1.05);
 });
 
 await run('normalizeTtsText trims and collapses space', () => {
@@ -49,6 +52,8 @@ await run('ttsCacheKey is stable for the same line and changes with voice or sca
   assertEquals(a, b);
   assert(a !== c, 'voice must affect the key');
   assert(a !== d, 'length_scale must affect the key');
+  const e = ttsCacheKey('Vincent met une plaque !', 'fr_FR-tom-medium.onnx', 0.9, 0.7, 0.95);
+  assert(a !== e, 'noise_scale must affect the key');
   assertEquals(a.length, 40);
 });
 
@@ -102,6 +107,8 @@ await run('engine reports 503 when piper is missing, then synthesizes through a 
       assertEquals(cmd, bin);
       assert(args.includes('--length_scale'));
       assert(args.includes('0.9'));
+      assert(args.includes('--noise_scale'));
+      assert(args.includes('--noise_w'));
       const out = args[args.indexOf('--output_file') + 1];
       return {
         stdin: { write() {}, end() {} },
@@ -152,7 +159,7 @@ await run('createSpeechOutput prefers Piper audio and falls back to speechSynthe
   const plays = [];
   class FakeAudio {
     constructor(src) { this.src = src; this.onended = null; this.onerror = null; this.onplay = null; }
-    play() { plays.push(this.src); setImmediate(() => this.onended && this.onended()); return Promise.resolve(); }
+    play() { plays.push({ src: this.src, rate: this.playbackRate }); setImmediate(() => this.onended && this.onended()); return Promise.resolve(); }
     pause() {}
     removeAttribute() {}
   }
@@ -165,6 +172,7 @@ await run('createSpeechOutput prefers Piper audio and falls back to speechSynthe
   });
   await new Promise((resolve) => out.speak('Vincent met une plaque ! Quelle relance !', { onend: resolve }));
   assert(plays.length === 1, 'expected Piper playback');
+  assertEquals(plays[0].rate, 1.05);
   assert(!spoken.includes('Vincent met une plaque ! Quelle relance !'), 'must not use speechSynthesis when Piper works');
 
   allowPiper = false;

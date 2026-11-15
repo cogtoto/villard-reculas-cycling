@@ -8,11 +8,22 @@ import os from 'os';
 import path from 'path';
 import { LINES, formatLine } from '../commentator.js';
 
-export const DEFAULT_LENGTH_SCALE = 0.9;
+export const DEFAULT_LENGTH_SCALE = 0.8;
+export const DEFAULT_NOISE_SCALE = 0.8;
+export const DEFAULT_NOISE_W = 0.95;
+
 export const MAX_TEXT_CHARS = 400;
 export const SYNTH_TIMEOUT_MS = 8000;
 
 const HOME = process.env.HOME || os.homedir();
+
+export function readPiperConfig() {
+  try {
+    const cfgPath = path.join(HOME, '.local/share/piper/config.json');
+    if (fs.existsSync(cfgPath)) return JSON.parse(fs.readFileSync(cfgPath, 'utf8')) || {};
+  } catch { /* ignore */ }
+  return {};
+}
 
 export function defaultPiperBin() {
   if (process.env.PIPER_BIN) return process.env.PIPER_BIN;
@@ -60,17 +71,45 @@ export function defaultCacheDir() {
     || path.join(HOME, '.cache/velo-virtuel/tts');
 }
 
-export function lengthScale() {
-  const n = Number(process.env.PIPER_LENGTH_SCALE);
-  return Number.isFinite(n) && n > 0.5 && n < 1.5 ? n : DEFAULT_LENGTH_SCALE;
+function numbered(envName, cfgVal, fallback, lo, hi) {
+  const fromEnv = Number(process.env[envName]);
+  if (Number.isFinite(fromEnv) && fromEnv >= lo && fromEnv <= hi) return fromEnv;
+  const fromCfg = Number(cfgVal);
+  if (Number.isFinite(fromCfg) && fromCfg >= lo && fromCfg <= hi) return fromCfg;
+  return fallback;
+}
+
+export function lengthScale(cfg = readPiperConfig()) {
+  return numbered('PIPER_LENGTH_SCALE', cfg.length_scale, DEFAULT_LENGTH_SCALE, 0.5, 1.5);
+}
+
+export function noiseScale(cfg = readPiperConfig()) {
+  return numbered('PIPER_NOISE_SCALE', cfg.noise_scale, DEFAULT_NOISE_SCALE, 0.2, 1.5);
+}
+
+export function noiseW(cfg = readPiperConfig()) {
+  return numbered('PIPER_NOISE_W', cfg.noise_w, DEFAULT_NOISE_W, 0.2, 1.5);
+}
+
+export function piperSpeaker(cfg = readPiperConfig()) {
+  if (process.env.PIPER_SPEAKER != null && process.env.PIPER_SPEAKER !== '') {
+    const n = Number(process.env.PIPER_SPEAKER);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  if (cfg.speaker != null && cfg.speaker !== '') {
+    const n = Number(cfg.speaker);
+    if (Number.isFinite(n) && n >= 0) return Math.floor(n);
+  }
+  return null;
 }
 
 export function normalizeTtsText(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
-export function ttsCacheKey(text, modelPath, scale) {
-  const raw = `${path.basename(modelPath || '')}|${scale}|${normalizeTtsText(text)}`;
+export function ttsCacheKey(text, modelPath, scale, noise = DEFAULT_NOISE_SCALE, width = DEFAULT_NOISE_W, speaker = null) {
+  const sp = speaker == null ? '' : String(speaker);
+  const raw = `${path.basename(modelPath || '')}|${scale}|${noise}|${width}|${sp}|${normalizeTtsText(text)}`;
   return crypto.createHash('sha1').update(raw).digest('hex');
 }
 
@@ -130,9 +169,13 @@ export function corsHeaders() {
 }
 
 export function createTtsEngine(opts = {}) {
+  const cfg = opts.config || readPiperConfig();
   const bin = opts.bin || defaultPiperBin();
   const model = opts.model || defaultModelPath();
-  const scale = opts.lengthScale != null ? opts.lengthScale : lengthScale();
+  const scale = opts.lengthScale != null ? opts.lengthScale : lengthScale(cfg);
+  const nScale = opts.noiseScale != null ? opts.noiseScale : noiseScale(cfg);
+  const nW = opts.noiseW != null ? opts.noiseW : noiseW(cfg);
+  const speaker = opts.speaker !== undefined ? opts.speaker : piperSpeaker(cfg);
   const cacheDir = opts.cacheDir || defaultCacheDir();
   const timeoutMs = opts.timeoutMs || SYNTH_TIMEOUT_MS;
   const spawnFn = opts.spawnFn || spawn;
@@ -180,7 +223,7 @@ export function createTtsEngine(opts = {}) {
     } else if (!binOk) {
       available = { ok: false, reason: `Piper binary not found: ${bin}`, voice: voiceId(), bin, model };
     } else {
-      available = { ok: true, reason: 'ok', voice: voiceId(), bin, model, lengthScale: scale };
+      available = { ok: true, reason: 'ok', voice: voiceId(), bin, model, lengthScale: scale, noiseScale: nScale, noiseW: nW, speaker };
     }
     return available;
   };
@@ -192,6 +235,9 @@ export function createTtsEngine(opts = {}) {
       engine: 'piper',
       voice: st.voice,
       lengthScale: scale,
+      noiseScale: nScale,
+      noiseW: nW,
+      speaker,
       reason: st.reason,
       cached: memory.size,
       warmup
@@ -253,13 +299,20 @@ export function createTtsEngine(opts = {}) {
     try { child.kill('SIGKILL'); } catch { /* ignore */ }
   };
 
-  const startWorker = () => {
-    const child = spawnFn(bin, [
+  const piperArgs = (extra) => {
+    const args = [
       '--model', model,
       '--length_scale', String(scale),
-      '--json-input',
-      '--quiet'
-    ], { stdio: ['pipe', 'pipe', 'pipe'] });
+      '--noise_scale', String(nScale),
+      '--noise_w', String(nW)
+    ];
+    if (speaker != null) args.push('--speaker', String(speaker));
+    args.push(...extra);
+    return args;
+  };
+
+  const startWorker = () => {
+    const child = spawnFn(bin, piperArgs(['--json-input', '--quiet']), { stdio: ['pipe', 'pipe', 'pipe'] });
     workerStderr = '';
     if (child.stderr && child.stderr.on) {
       child.stderr.on('data', (d) => { workerStderr += d.toString(); if (workerStderr.length > 4000) workerStderr = workerStderr.slice(-2000); });
@@ -285,11 +338,7 @@ export function createTtsEngine(opts = {}) {
   };
 
   const runPiperOnce = (text, outFile) => new Promise((resolve, reject) => {
-    const args = [
-      '--model', model,
-      '--output_file', outFile,
-      '--length_scale', String(scale)
-    ];
+    const args = piperArgs(['--output_file', outFile]);
     const child = spawnFn(bin, args, {
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -361,7 +410,7 @@ export function createTtsEngine(opts = {}) {
       err.statusCode = 503;
       throw err;
     }
-    const key = ttsCacheKey(text, model, scale);
+    const key = ttsCacheKey(text, model, scale, nScale, nW, speaker);
     if (memory.has(key)) return memory.get(key);
     const disk = readDisk(key);
     if (disk) {
@@ -407,7 +456,7 @@ export function createTtsEngine(opts = {}) {
         warmup.done += 1;
       }
       warmup.running = false;
-      console.log(`[tts] warmup done ${warmup.done}/${warmup.total} (${voiceId()}, length_scale=${scale})`);
+      console.log(`[tts] warmup done ${warmup.done}/${warmup.total} (${voiceId()}, length_scale=${scale}, noise_scale=${nScale}, noise_w=${nW})`);
     };
     setTimeout(() => tick().catch((err) => {
       warmup.running = false;
