@@ -807,6 +807,19 @@ window.veloViewFinishChalet = (distance = 20) => {
   return true;
 };
 window.veloClearView = () => { window._cameraOverride = null; };
+window.veloOverhead = (height = 35) => {
+  if (!track) return false;
+  const sm = sampleTrack(track, distanceM);
+  window._cameraOverride = {
+    x: sm.pos.x - sm.dir.x * 4,
+    y: sm.pos.y + height,
+    z: sm.pos.z - sm.dir.z * 4,
+    lx: sm.pos.x + sm.dir.x * 10,
+    ly: sm.pos.y,
+    lz: sm.pos.z + sm.dir.z * 10
+  };
+  return true;
+};
 
 
 // --- Chargement GPX (appelé après sélection de route) ---

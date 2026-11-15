@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 import { PALETTE } from './palette.js';
 import { addCloudsToSky } from './clouds.js';
+import { buildRoadIndex, clampHeightToRoadCorridor, TERRAIN_CELL_SIZE, VEG_CLEARANCE } from './road-corridor.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -20,7 +21,7 @@ const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 214748364
 export const SNOW_LINE = 2150; // altitude moyenne de la limite de neige (m)
 export const ZONE_COLORS = { meadow: 'rgba(130,165,90,.75)', forest: 'rgba(45,85,50,.8)', rock: 'rgba(140,135,128,.8)', snow: 'rgba(240,244,250,.85)', village: 'rgba(200,170,130,.85)', water: 'rgba(79,123,132,.95)', shore: 'rgba(138,140,136,.9)' };
 
-export function buildAlpineTerrain(scene, track, dem) {
+export function createAlpineHeightField(track, dem, { cellSize = TERRAIN_CELL_SIZE } = {}) {
   const pts = track.pts;
   const box = new THREE.Box3(); pts.forEach((p) => box.expandByPoint(new THREE.Vector3(p.x, 0, p.z)));
   const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
@@ -79,26 +80,17 @@ export function buildAlpineTerrain(scene, track, dem) {
   };
   const nearWater = (x, z) => waterAt(x + 30, z) || waterAt(x - 30, z) || waterAt(x, z + 30) || waterAt(x, z - 30);
   c.set(x0 + W / 2, 0, z0 + H / 2);
-  const CS = 40, SX = Math.round(W / CS), SZ = Math.round(H / CS); // maille ≈ 40 m (MNT ≈ 20–28 m)
+  const CS = cellSize, SX = Math.round(W / CS), SZ = Math.round(H / CS);
+  const roadIndex = buildRoadIndex(pts);
   const geo = new THREE.PlaneGeometry(W, H, SX, SZ); geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i) + c.x, z = pos.getZ(i) + c.z;
     let y = demAt(x, z);
     const nr = nearest(x, z, 1);
-    if (nr.d < 300) {
-      // Road corridor: terrain always below road (road at nr.y + 0.25)
-      const t = THREE.MathUtils.smoothstep(nr.d, 14, 70);
-      y = (nr.y - 0.35) * (1 - t) + y * t; // Start 35cm below GPX
-      // Under road: must be at least 50cm below to prevent z-fighting
-      if (nr.d < 7) {
-        y = Math.min(y, nr.y - 0.5);
-      } else {
-        // Slopes away from road
-        y = Math.min(y, nr.y - 0.5 + Math.max(0, nr.d - 7) * 0.8);
-        y = Math.max(y, nr.y - 0.5 - Math.max(0, nr.d - 7) * 1.0);
-      }
-    }
+    // Carve under every nearby road sample so hairpins cannot bury the ribbon
+    // (a 40 m grid used to interpolate grass through the tarmac).
+    y = clampHeightToRoadCorridor(y, x, z, roadIndex);
     if (nr.d > 25 && waterAt(x, z)) y = Math.min(y, WL - 4); // fond du lac sous la surface
     pos.setY(i, y);
   }
@@ -111,6 +103,21 @@ export function buildAlpineTerrain(scene, track, dem) {
   };
   const slopeAt = (x, z) => { const e = 20; return Math.hypot(heightAt(x + e, z) - heightAt(x - e, z), heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e); };
   const forestMask = (x, z) => fbm(x * 0.0018 + 40, z * 0.0018 - 13, 4);
+
+  return {
+    pts, box, c, size, minY, nearest, distTo, demAt, toLL, toXZ, M, HD,
+    waterAt, nearWater, wMask, WL, x0, z0, W, H, CS, SX, SZ, geo, pos,
+    heightAt, slopeAt, forestMask, roadIndex
+  };
+}
+
+export function buildAlpineTerrain(scene, track, dem) {
+  const field = createAlpineHeightField(track, dem);
+  const {
+    pts, box, c, size, minY, distTo, toXZ, M,
+    waterAt, nearWater, wMask, WL, x0, z0, W, H, SX, SZ, geo, pos,
+    heightAt, slopeAt, forestMask
+  } = field;
 
   // Zones : prairie / forêt / roche / neige (+ village at the finish, Villard-Reculas)
   const finish = pts[pts.length - 1];
@@ -439,7 +446,7 @@ export function addForest(scene, track, terrain, max = 14000) {
     const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
     const zc = terrain.classify(x, z);
     if (zc !== 'forest' && !(zc === 'village' && rand() < 0.04)) continue; // + sapins isolés au village
-    if (terrain.distTo(x, z) < 9) continue;
+    if (terrain.distTo(x, z) < VEG_CLEARANCE) continue;
     if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 120)) continue;
     const y = terrain.heightAt(x, z);
     const item = { x, y: y - 0.3, z, s: 0.7 + rand() * rand() * 1.1, r: rand() * 6.28 };
@@ -486,7 +493,7 @@ export function addVillage(scene, track, terrain, n = 35) {
   const s = track.pts[0], list = [];
   for (let t = 0; t < 2000 && list.length < n; t++) {
     const a = rand() * 6.28, r = 20 + rand() * 230, x = s.x + Math.cos(a) * r, z = s.z + Math.sin(a) * r;
-    if (terrain.distTo(x, z) < 10 || terrain.slopeAt(x, z) > 0.5) continue;
+    if (terrain.distTo(x, z) < VEG_CLEARANCE || terrain.slopeAt(x, z) > 0.5) continue;
     if (list.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 220) || terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 220)) continue;
     list.push({ x, z, y: terrain.heightAt(x, z) - 0.6, rot: rand() * 6.28, w: 8 + rand() * 5, d: 7 + rand() * 4, h: 4 + rand() * 3, v: rand() });
   }

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PALETTE } from './palette.js';
+import { VEG_CLEARANCE } from './road-corridor.js';
 
 let seed = 4242;
 const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
@@ -167,7 +168,7 @@ export function addChalets(scene, track, terrain, { village = 30, hamlets = 50 }
   
   // Check if position is suitable
   const isOk = (x, z) => {
-    if (terrain.distTo(x, z) < 12) return false; // Too close to road
+    if (terrain.distTo(x, z) < VEG_CLEARANCE) return false; // Too close to road
     if (terrain.slopeAt(x, z) > 0.5) return false; // Too steep
     if (terrain.waterAt && terrain.waterAt(x, z)) return false; // In water
     if (terrain.classify(x, z) === 'rock' || terrain.classify(x, z) === 'snow') return false;

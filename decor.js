@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { makeGeo } from './geo.js';
+import { ROAD_Y_LIFT, ROAD_WIDTH } from './road-corridor.js';
 
 // ---------- utilitaires ----------
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
@@ -378,7 +379,7 @@ export function addVegetation(scene, track, terrain) {
 }
 
 // ---------- route ----------
-export function buildRoad(scene, track, width = 4, terrain = null, useRealTerrain = false) {
+export function buildRoad(scene, track, width = ROAD_WIDTH, terrain = null, useRealTerrain = false) {
   const { pts, cum } = track, n = pts.length;
   
   // If using real terrain, smooth DEM elevations for road
@@ -431,17 +432,18 @@ export function buildRoad(scene, track, width = 4, terrain = null, useRealTerrai
     return g;
   };
   const h = width / 2, side = THREE.DoubleSide;
-  // Road lifted 25cm and with strong polygonOffset to always stay above terrain
-  const road = new THREE.Mesh(ribbon(h, -h, 0.25, 6), new THREE.MeshStandardMaterial({ 
+  // Road lifted above the carved terrain, with a strong depth bias so
+  // interpolation or z-fighting cannot bury the ribbon in the grass.
+  const road = new THREE.Mesh(ribbon(h, -h, ROAD_Y_LIFT, 6), new THREE.MeshStandardMaterial({ 
     map: asphalt, 
     roughness: 0.92, 
     metalness: 0, 
     side, 
     polygonOffset: true, 
-    polygonOffsetFactor: -3, 
-    polygonOffsetUnits: -3 
+    polygonOffsetFactor: -6, 
+    polygonOffsetUnits: -8 
   }));
-  road.receiveShadow = true; road.frustumCulled = false; scene.add(road);
+  road.receiveShadow = true; road.frustumCulled = false; road.renderOrder = 2; scene.add(road);
   
   // Grass verges (no grey shoulders, no white edge lines per user preference)
   if (!useRealTerrain) {
