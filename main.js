@@ -11,6 +11,7 @@ import { addFinishChalet } from './finish-chalet.js';
 import { createRider } from './rider.js';
 import { createSensors } from './sensors.js';
 import { addRoadside } from './roadside.js';
+import { addChalkMarks } from './chalk-marks.js';
 import { buildAlpineTerrain, alpineAtmosphere, installHeightFog, addForest, ZONE_COLORS } from './alpine.js';
 import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNormandyCows, addNormandyHouses, NORMANDY_ZONE_COLORS } from './normandy.js';
 import { addNormandyChurches } from './normandy-churches.js';
@@ -47,6 +48,7 @@ const ROUTES = {
       console.log('Finish chalet:', finishChalet);
 
       console.log('Roadside:', addRoadside(scene, track, terrain));
+      console.log('Chalk marks: ' + addChalkMarks(scene, track).map((m) => `${m.km}km@${(m.d / 1000).toFixed(2)}:${m.alt}m/${m.grade.toFixed(1)}%`).join(' '));
       console.log('Trees:', addForest(scene, track, terrain), 'instances');
     },
     zoneColors: ZONE_COLORS
@@ -214,6 +216,7 @@ function formatRideTime(seconds) {
 const SKY = 0xa8d0f0;
 const scene = new THREE.Scene();
 window.veloScene = scene; // debug / audit hook
+if (localStorage.getItem('vv.debug') === '1') window.veloSample = (m) => (track ? sampleTrack(track, m) : null); // debug only: road point at m metres
 
 // Placeholder fog and background (will be updated per route)
 scene.background = new THREE.Color(SKY);
@@ -431,7 +434,7 @@ function showStats() {
     const name = routeName.replace(/[^a-z0-9]+/gi, '_') + '_' + new Date(S.t0).toISOString().slice(0, 10) + '.tcx';
     try {
       // Get current version from package.json or default
-      const appVersion = '0.5.39';
+      const appVersion = '0.5.40';
       const how = await saveFile(name, buildTcx(S.samples, { name: routeName, version: appVersion }));
       if (how.startsWith('Saved to')) {
         msg.textContent = `✓ ${how} — also shared`;
