@@ -72,7 +72,7 @@ test.describe('TCX Export Validation', () => {
     expect(trackpointMatch).toBeTruthy();
     const tpContent = trackpointMatch[0];
     
-    // Verify required order: Time, Position, AltitudeMeters, DistanceMeters, Cadence?, Extensions
+    // Verify required order: Time, Position, AltitudeMeters, DistanceMeters, HeartRateBpm?, Cadence?, Extensions
     const tpElements = [
       '<Time>',
       '<Position>',
@@ -154,5 +154,31 @@ test.describe('TCX Export Validation', () => {
     for (const tp of trackpointMatches) {
       expect(tp).not.toContain('<Cadence>');
     }
+  });
+
+  test('writes HeartRateBpm in schema order when samples include hr', async () => {
+    const samples = [];
+    const baseTime = Date.now();
+    for (let i = 0; i < 10; i++) {
+      samples.push({
+        t: baseTime + i * 1000, lat: 45.0, lon: 6.0, alt: 1650,
+        dist: i * 10, w: 150, cad: 80, v: 7.5, hr: 140 + i,
+      });
+    }
+    const tcx = buildTcx(samples, { name: 'HR Ride', version: '0.5.38' });
+    const tp = tcx.match(/<Trackpoint>[\s\S]*?<\/Trackpoint>/)[0];
+    expect(tp).toContain('<HeartRateBpm><Value>140</Value></HeartRateBpm>');
+    expect(tp.indexOf('<DistanceMeters>')).toBeLessThan(tp.indexOf('<HeartRateBpm>'));
+    expect(tp.indexOf('<HeartRateBpm>')).toBeLessThan(tp.indexOf('<Cadence>'));
+    expect(tp.indexOf('<Cadence>')).toBeLessThan(tp.indexOf('<Extensions>'));
+    const lap = tcx.match(/<Lap[\s\S]*?<\/Lap>/)[0];
+    expect(lap).toMatch(/<AverageHeartRateBpm><Value>\d+<\/Value><\/AverageHeartRateBpm>/);
+    expect(lap).toMatch(/<MaximumHeartRateBpm><Value>149<\/Value><\/MaximumHeartRateBpm>/);
+    expect(lap.indexOf('<Calories>')).toBeLessThan(lap.indexOf('<AverageHeartRateBpm>'));
+    expect(lap.indexOf('<MaximumHeartRateBpm>')).toBeLessThan(lap.indexOf('<Intensity>'));
+
+    const tempFile = '/tmp/test-ride-hr.tcx';
+    writeFileSync(tempFile, tcx);
+    execSync(`xmllint --noout --schema TrainingCenterDatabasev2.xsd ${tempFile}`, { cwd: process.cwd(), stdio: 'pipe' });
   });
 });

@@ -16,6 +16,7 @@ import { buildNormandyTerrain, normandyAtmosphere, addNormandyVegetation, addNor
 import { addNormandyChurches } from './normandy-churches.js';
 import { createFTPRampTest, createSweetSpotWorkout, createExplosiveWorkout, createVariedThresholdWorkout, getCurrentInterval, detectRampTestFailure, calculateEstimatedFTP, getWorkoutProfile, getWorkoutLegendZones, getPowerZoneFromWatts, POWER_ZONES, formatTime } from './workouts.js';
 import { buildTcx, saveFile, toLatLon } from './export.js';
+import { recentHeartRate } from './hr-telemetry.js';
 import { startERGMode, stopERGMode, updateTargetPower, adjustTargetPower, isERGActive, initializeERGMode } from './erg-mode.js';
 import { getCoachingMessage, getRampTestMessage, shouldShowMessage, resetCoachingTimer } from './coaching.js';
 import { placeVillageSigns, checkSignProximity, resetSignAnnouncements } from './village-signs.js';
@@ -345,7 +346,8 @@ function recordStats(dt, here) {
   if (S.elapsed >= S.nextSample) {
     S.nextSample = Math.ceil(S.elapsed) + 1;
     const [lat, lon] = toLatLon(track.origin, here.pos.x, here.pos.z);
-    S.samples.push({ t: S.t0 + S.elapsed * 1000, lat, lon, alt: here.pos.y, dist: S.dist, w, cad: state.cadence || 0, v });
+    const hr = recentHeartRate(state.hr, lastHrUpdate);
+    S.samples.push({ t: S.t0 + S.elapsed * 1000, lat, lon, alt: here.pos.y, dist: S.dist, w, cad: state.cadence || 0, v, ...(hr != null ? { hr } : {}) });
   }
   if (v > 0.5) S.moving += dt;
   S.dist += v * dt; S.maxV = Math.max(S.maxV, v);
@@ -427,7 +429,7 @@ function showStats() {
     const name = routeName.replace(/[^a-z0-9]+/gi, '_') + '_' + new Date(S.t0).toISOString().slice(0, 10) + '.tcx';
     try {
       // Get current version from package.json or default
-      const appVersion = '0.5.13';
+      const appVersion = '0.5.38';
       const how = await saveFile(name, buildTcx(S.samples, { name: routeName, version: appVersion }));
       if (how.startsWith('Saved to')) {
         msg.textContent = `✓ ${how} — also shared`;

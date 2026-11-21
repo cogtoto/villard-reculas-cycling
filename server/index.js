@@ -2,6 +2,7 @@ import http from 'http';
 import { WebSocketServer } from 'ws';
 import { createBleSource } from './ble.js';
 import { steadySpeed } from '../physics.js';
+import { telemetryFromCompanion } from '../hr-telemetry.js';
 
 const PORT = 8787;
 const USE_BLE = process.env.VELO_BLE !== '0';
@@ -33,12 +34,7 @@ wss.on('connection', (ws) => {
     else if (ws.isCompanion && m.type === 'companion') {
       companionOk = true; companionTs = Date.now();
       const watts = Number(m.watts) || 0;
-      live = { type: 'telemetry', watts, cadence: Number(m.cadence) || 0, gradePct: clientGrade,
-        speedKmh: speedFromWatts(watts, clientGrade), source: 'companion' + (m.sensor ? ' ' + m.sensor : ''), ts: Date.now() };
-      // Include optional HR if present
-      if (m.hr !== null && m.hr !== undefined && Number(m.hr) > 0) {
-        live.hr = Number(m.hr);
-      }
+      live = telemetryFromCompanion(m, { gradePct: clientGrade, speedKmh: speedFromWatts(watts, clientGrade), ts: Date.now() });
       broadcast(live);
     }
     else if (ws.isCompanion && m.type === 'shift') { const d = JSON.stringify({ type: 'shift', delta: Math.sign(Number(m.delta) || 0) }); for (const c of viewers()) c.send(d); }

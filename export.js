@@ -1,5 +1,6 @@
 // Export de la sortie au format TCX (Garmin Connect / Strava : puissance, cadence, vitesse, altitude, GPS).
 import { Capacitor } from '@capacitor/core';
+export { recentHeartRate, HR_MAX_AGE_MS, telemetryFromCompanion, applyTelemetryToGameState } from './hr-telemetry.js';
 
 const R = 6371000;
 export function toLatLon(origin, x, z) {
@@ -7,8 +8,8 @@ export function toLatLon(origin, x, z) {
   return [origin.lat0 - (z / R) * 180 / Math.PI, origin.lon0 + (x / (R * k)) * 180 / Math.PI];
 }
 
-// samples : [{ t (ms epoch), lat, lon, alt, dist (m), w, cad, v (m/s) }]
-export function buildTcx(samples, { name = 'Velo Virtuel ride', version = '0.5.13' } = {}) {
+// samples : [{ t (ms epoch), lat, lon, alt, dist (m), w, cad, v (m/s), hr? (bpm) }]
+export function buildTcx(samples, { name = 'Velo Virtuel ride', version = '0.5.38' } = {}) {
   const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
   const s0 = samples[0], sN = samples[samples.length - 1];
   const secs = (sN.t - s0.t) / 1000, avgW = samples.reduce((a, s) => a + s.w, 0) / samples.length;
@@ -20,9 +21,19 @@ export function buildTcx(samples, { name = 'Velo Virtuel ride', version = '0.5.1
   const vParts = version.split('.').map(Number);
   const vMajor = vParts[0] || 0, vMinor = vParts[1] || 5, vBuildMajor = vParts[2] || 0;
   
+  const hrs = samples.map((s) => Number(s.hr)).filter((n) => Number.isFinite(n) && n > 0);
+  const avgHr = hrs.length ? Math.round(hrs.reduce((a, n) => a + n, 0) / hrs.length) : 0;
+  const maxHr = hrs.length ? Math.round(Math.max(...hrs)) : 0;
+  const hrTag = (tag, bpm) => `<${tag}><Value>${Math.round(bpm)}</Value></${tag}>`;
+
   // Trackpoint: Time, Position, AltitudeMeters, DistanceMeters, HeartRateBpm?, Cadence?, SensorState?, Extensions
-  const tp = samples.map((s) => `<Trackpoint><Time>${iso(s.t)}</Time><Position><LatitudeDegrees>${s.lat.toFixed(7)}</LatitudeDegrees><LongitudeDegrees>${s.lon.toFixed(7)}</LongitudeDegrees></Position><AltitudeMeters>${s.alt.toFixed(1)}</AltitudeMeters><DistanceMeters>${s.dist.toFixed(1)}</DistanceMeters>${s.cad > 0 ? `<Cadence>${Math.round(s.cad)}</Cadence>` : ''}<Extensions><ns3:TPX><ns3:Speed>${s.v.toFixed(2)}</ns3:Speed><ns3:Watts>${Math.round(s.w)}</ns3:Watts></ns3:TPX></Extensions></Trackpoint>`).join('\n');
-  
+  const tp = samples.map((s) => {
+    const hr = Number(s.hr);
+    const hrEl = (Number.isFinite(hr) && hr > 0) ? hrTag('HeartRateBpm', hr) : '';
+    const cadEl = s.cad > 0 ? `<Cadence>${Math.round(s.cad)}</Cadence>` : '';
+    return `<Trackpoint><Time>${iso(s.t)}</Time><Position><LatitudeDegrees>${s.lat.toFixed(7)}</LatitudeDegrees><LongitudeDegrees>${s.lon.toFixed(7)}</LongitudeDegrees></Position><AltitudeMeters>${s.alt.toFixed(1)}</AltitudeMeters><DistanceMeters>${s.dist.toFixed(1)}</DistanceMeters>${hrEl}${cadEl}<Extensions><ns3:TPX><ns3:Speed>${s.v.toFixed(2)}</ns3:Speed><ns3:Watts>${Math.round(s.w)}</ns3:Watts></ns3:TPX></Extensions></Trackpoint>`;
+  }).join('\n');
+
   // Lap: TotalTimeSeconds, DistanceMeters, MaximumSpeed, Calories, AverageHeartRateBpm?, MaximumHeartRateBpm?, Intensity, Cadence?, TriggerMethod, Track, Notes?, Extensions
   return `<?xml version="1.0" encoding="UTF-8"?>
 <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:ns3="http://www.garmin.com/xmlschemas/ActivityExtension/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
@@ -31,7 +42,9 @@ export function buildTcx(samples, { name = 'Velo Virtuel ride', version = '0.5.1
 <TotalTimeSeconds>${secs.toFixed(0)}</TotalTimeSeconds>
 <DistanceMeters>${sN.dist.toFixed(1)}</DistanceMeters>
 <MaximumSpeed>${maxV.toFixed(2)}</MaximumSpeed>
-<Calories>${kcal}</Calories>
+<Calories>${kcal}</Calories>${avgHr ? `
+<AverageHeartRateBpm><Value>${avgHr}</Value></AverageHeartRateBpm>
+<MaximumHeartRateBpm><Value>${maxHr}</Value></MaximumHeartRateBpm>` : ''}
 <Intensity>Active</Intensity>${avgCad ? `
 <Cadence>${avgCad}</Cadence>` : ''}
 <TriggerMethod>Manual</TriggerMethod>
