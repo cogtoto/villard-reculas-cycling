@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 import { PALETTE } from './palette.js';
 import { addCloudsToSky } from './clouds.js';
-import { buildRoadIndex, fitHeightToRoadCorridor, TERRAIN_CELL_SIZE, VEG_CLEARANCE, ROAD_BED_CELL, ROAD_BLEND_END } from './road-corridor.js';
+import { buildRoadIndex, fitHeightToRoadCorridor, TERRAIN_CELL_SIZE, VEG_CLEARANCE, ROAD_BED_CELL, ROAD_BLEND_END, ROAD_Y_LIFT, ROAD_CLEARANCE, ROAD_HARD_HALF } from './road-corridor.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -95,10 +95,14 @@ export function createAlpineHeightField(track, dem, { cellSize = TERRAIN_CELL_SI
     pos.setY(i, y);
   }
   geo.computeVertexNormals();
+  // Heights as fitted, before clearLandUnderRoad() pushes the coarse mesh
+  // below the corridor bed. Queries (trees, chalets, camera) keep using these.
+  const baseY = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) baseY[i] = pos.getY(i);
   const meshHeightAt = (x, z) => {
     const gx = ((x - x0) / W) * SX, gz = ((z - z0) / H) * SZ;
     const i = Math.max(0, Math.min(SX - 1, Math.floor(gx))), j = Math.max(0, Math.min(SZ - 1, Math.floor(gz)));
-    const fx = gx - i, fz = gz - j, Y = (a, b) => pos.getY(b * (SX + 1) + a);
+    const fx = gx - i, fz = gz - j, Y = (a, b) => baseY[b * (SX + 1) + a];
     return (Y(i, j) * (1 - fx) + Y(i + 1, j) * fx) * (1 - fz) + (Y(i, j + 1) * (1 - fx) + Y(i + 1, j + 1) * fx) * fz;
   };
   // Query height uses the continuous corridor fit so the 20 m mesh cannot
@@ -109,18 +113,70 @@ export function createAlpineHeightField(track, dem, { cellSize = TERRAIN_CELL_SI
 
   return {
     pts, box, c, size, minY, nearest, distTo, demAt, toLL, toXZ, M, HD,
-    waterAt, nearWater, wMask, WL, x0, z0, W, H, CS, SX, SZ, geo, pos,
+    waterAt, nearWater, wMask, WL, x0, z0, W, H, CS, SX, SZ, geo, pos, baseY,
     heightAt, meshHeightAt, slopeAt, forestMask, roadIndex
   };
 }
 
 
-// Fine (4 m) grass bed along the road, using the same terrain texture.
-// This carries the 6 m flush band and 8 m blend at a resolution the 20 m
-// alpine mesh cannot represent, so the ribbon does not look perched or trenched.
-export function buildRoadCorridorMesh(field, texture) {
-  const { roadIndex, demAt, meshHeightAt, x0, z0, W, H } = field;
-  if (!roadIndex || !texture) return null;
+// Walk the paved surface (and the flush shoulders) of every road leg.
+// cb(x, z, roadY, off) for points every `step` metres along and across.
+export function forEachRoadSurfacePoint(roadIndex, offsets, step, cb) {
+  const D = roadIndex.dense;
+  for (let k = 0; k < D.length - 1; k++) {
+    const A = D[k], B = D[k + 1], L = Math.hypot(B.x - A.x, B.z - A.z);
+    if (L < 1e-6) continue;
+    const nx = -(B.z - A.z) / L, nz = (B.x - A.x) / L, n = Math.max(1, Math.ceil(L / step));
+    for (let q = 0; q < n; q++) {
+      const t = q / n, x = A.x + (B.x - A.x) * t, z = A.z + (B.z - A.z) * t, y = A.y + (B.y - A.y) * t;
+      for (const off of offsets) cb(x + nx * off, z + nz * off, y + ROAD_Y_LIFT, off);
+    }
+  }
+}
+
+// The coarse 20 m mesh interpolates across the road between fitted
+// vertices, so on steep cross-slopes a triangle can rise metres above the
+// tarmac (the road "disappears into the grass"). Push only the vertices of
+// offending triangles below the corridor; the 4 m bed, extended over every
+// touched quad, stays the visible ground there.
+export function clearLandUnderRoad(field, { margin = 0.35, half = ROAD_HARD_HALF } = {}) {
+  const { pos, x0, z0, W, H, SX, SZ, roadIndex } = field;
+  const offs = []; for (let o = -half; o <= half + 1e-6; o += 1) offs.push(o);
+  const cw = W / SX, ch = H / SZ, lowered = new Set();
+  const vi = (i, j) => j * (SX + 1) + i;
+  let fixes = 0;
+  for (let pass = 0; pass < 8; pass++) {
+    let bad = 0;
+    forEachRoadSurfacePoint(roadIndex, offs, 1, (x, z, roadY) => {
+      const gx = (x - x0) / cw, gz = (z - z0) / ch, i = Math.floor(gx), j = Math.floor(gz);
+      if (i < 0 || j < 0 || i >= SX || j >= SZ) return;
+      const fx = gx - i, fz = gz - j;
+      // PlaneGeometry split: (a=i,j  b=i,j+1  d=i+1,j) and (b, c=i+1,j+1, d)
+      const tri = fx + fz <= 1 ? [vi(i, j), vi(i, j + 1), vi(i + 1, j)] : [vi(i, j + 1), vi(i + 1, j + 1), vi(i + 1, j)];
+      const h = landHeight(pos, vi, i, j, fx, fz);
+      const target = roadY - ROAD_Y_LIFT - ROAD_CLEARANCE - margin;
+      if (h <= target) return;
+      bad++;
+      const dlt = h - target + 0.01;
+      for (const v of tri) { pos.setY(v, pos.getY(v) - dlt); lowered.add(v); }
+    });
+    fixes += bad;
+    if (!bad) break;
+  }
+  if (lowered.size) { pos.needsUpdate = true; field.geo.computeVertexNormals(); }
+  const quads = new Set();
+  for (const v of lowered) { const i = v % (SX + 1), j = (v / (SX + 1)) | 0; for (const [a, b] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) quads.add(`${i + a},${j + b}`); }
+  return { lowered: lowered.size, fixes, quads };
+}
+function landHeight(pos, vi, i, j, fx, fz) {
+  if (fx + fz <= 1) { const a = pos.getY(vi(i, j)), b = pos.getY(vi(i, j + 1)), d = pos.getY(vi(i + 1, j)); return a + (d - a) * fx + (b - a) * fz; }
+  const b = pos.getY(vi(i, j + 1)), c = pos.getY(vi(i + 1, j + 1)), d = pos.getY(vi(i + 1, j));
+  return c + (b - c) * (1 - fx) + (d - c) * (1 - fz);
+}
+
+export function buildRoadBedHeights(field, landQuads = null, { fix = true } = {}) {
+  const { roadIndex, demAt, meshHeightAt, x0, z0, W, H, SX, SZ } = field;
+  if (!roadIndex) return null;
   const CS = ROAD_BED_CELL;
   const radius = ROAD_BLEND_END;
   const r = Math.ceil(radius / CS);
@@ -135,15 +191,66 @@ export function buildRoadCorridorMesh(field, texture) {
       }
     }
   }
+  // Extra cells over coarse quads that clearLandUnderRoad() pushed down:
+  // there the bed reproduces the old coarse surface so the landscape is unchanged.
+  const extra = new Set();
+  if (landQuads && landQuads.size) {
+    const cw = W / SX, ch = H / SZ;
+    for (const q of landQuads) {
+      const c = q.indexOf(','), qi = +q.slice(0, c), qj = +q.slice(c + 1);
+      const ax = Math.floor((x0 + qi * cw) / CS) - 1, bx = Math.ceil((x0 + (qi + 1) * cw) / CS) + 1;
+      const az = Math.floor((z0 + qj * ch) / CS) - 1, bz = Math.ceil((z0 + (qj + 1) * ch) / CS) + 1;
+      for (let ix = ax; ix <= bx; ix++) for (let iz = az; iz <= bz; iz++) { const k = `${ix},${iz}`; if (!cells.has(k)) extra.add(k); }
+    }
+  }
   const src = demAt || meshHeightAt;
   const posMap = new Map();
-  for (const key of cells) {
+  for (const [set, fn] of [[cells, src], [extra, meshHeightAt]]) for (const key of set) {
     const comma = key.indexOf(',');
     const ix = +key.slice(0, comma), iz = +key.slice(comma + 1);
     const x = ix * CS, z = iz * CS;
-    const y = fitHeightToRoadCorridor(src(x, z), x, z, roadIndex);
+    const y = fitHeightToRoadCorridor(fn(x, z), x, z, roadIndex);
     posMap.set(key, { x, y, z, ix, iz });
   }
+  // Interpolation between 4 m nodes of two hairpin legs can still lift a
+  // bed triangle over the tarmac: lower just the offending nodes.
+  const node = (ix, iz) => posMap.get(`${ix},${iz}`);
+  let fixes = 0;
+  const offs = []; for (let o = -2.4; o <= 2.4 + 1e-6; o += 0.4) offs.push(o);
+  for (let pass = 0; fix && pass < 24; pass++) {
+    let bad = 0;
+    forEachRoadSurfacePoint(roadIndex, offs, 1, (x, z, roadY) => {
+      const gx = x / CS, gz = z / CS, ix = Math.floor(gx), iz = Math.floor(gz), fx = gx - ix, fz = gz - iz;
+      const a = node(ix, iz), b = node(ix + 1, iz), c = node(ix, iz + 1), d = node(ix + 1, iz + 1);
+      if (!a || !b || !c || !d) return;
+      const lo = fx + fz <= 1;
+      const tri = lo ? [a, b, c] : [d, c, b];
+      const wts = lo ? [1 - fx - fz, fx, fz] : [fx + fz - 1, 1 - fx, 1 - fz];
+      const h = tri[0].y * wts[0] + tri[1].y * wts[1] + tri[2].y * wts[2];
+      // the asphalt carries a strong depth bias, so only a bed that actually
+      // rises through the tarmac needs lowering
+      if (h <= roadY - 0.03) return;
+      const target = roadY - 0.06;
+      bad++;
+      // smallest change: lower only nodes above the target, in proportion to their weight
+      let ws = 0; for (let k = 0; k < 3; k++) if (tri[k].y > target) ws += wts[k];
+      const dl = (h - target + 0.01) / Math.max(ws, 1e-3);
+      for (let k = 0; k < 3; k++) if (tri[k].y > target) tri[k].y = Math.max(target, tri[k].y - dl);
+    });
+    fixes += bad;
+    if (!bad) break;
+  }
+  return { posMap, cells: cells.size, extra: extra.size, fixes };
+}
+
+// Fine (4 m) grass bed along the road, using the same terrain texture.
+// This carries the 6 m flush band and 8 m blend at a resolution the 20 m
+// alpine mesh cannot represent, so the ribbon does not look perched or trenched.
+export function buildRoadCorridorMesh(field, texture, landQuads = null) {
+  const bed = buildRoadBedHeights(field, landQuads);
+  if (!bed || !texture) return null;
+  const { posMap } = bed;
+  const { x0, z0, W, H } = field;
   const positions = [], uvs = [], idx = [];
   const vertIndex = new Map();
   const vert = (key) => {
@@ -177,7 +284,23 @@ export function buildRoadCorridorMesh(field, texture) {
   mesh.receiveShadow = true;
   mesh.renderOrder = 1;
   mesh.frustumCulled = false;
+  mesh.userData.bed = bed;
   return mesh;
+}
+
+// Height of what is actually drawn (coarse terrain or corridor bed, whichever is higher).
+export function makeSurfaceSampler(field, bed) {
+  const { pos, x0, z0, W, H, SX, SZ } = field, cw = W / SX, ch = H / SZ, vi = (i, j) => j * (SX + 1) + i;
+  const CS = ROAD_BED_CELL, N = (ix, iz) => bed && bed.posMap.get(`${ix},${iz}`);
+  return (x, z) => {
+    let y = -Infinity;
+    const gx = (x - x0) / cw, gz = (z - z0) / ch, i = Math.floor(gx), j = Math.floor(gz);
+    if (i >= 0 && j >= 0 && i < SX && j < SZ) y = landHeight(pos, vi, i, j, gx - i, gz - j);
+    const bx = x / CS, bz = z / CS, ix = Math.floor(bx), iz = Math.floor(bz), fx = bx - ix, fz = bz - iz;
+    const a = N(ix, iz), b = N(ix + 1, iz), c = N(ix, iz + 1), d = N(ix + 1, iz + 1);
+    if (a && b && c && d) y = Math.max(y, fx + fz <= 1 ? a.y + (b.y - a.y) * fx + (c.y - a.y) * fz : d.y + (c.y - d.y) * (1 - fx) + (b.y - d.y) * (1 - fz));
+    return y;
+  };
 }
 
 export function buildAlpineTerrain(scene, track, dem) {
@@ -237,8 +360,11 @@ export function buildAlpineTerrain(scene, track, dem) {
   const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map, roughness: 1 }));
   land.position.set(c.x, 0, c.z); land.receiveShadow = true;
   scene.add(land);
-  const bed = buildRoadCorridorMesh(field, map);
+  const cleared = clearLandUnderRoad(field);
+  const bed = buildRoadCorridorMesh(field, map, cleared.quads);
   if (bed) scene.add(bed);
+  const surfaceAt = makeSurfaceSampler(field, bed && bed.userData.bed);
+  console.log(`Road clearance: ${cleared.lowered} coarse vertices lowered (${cleared.fixes} fixes), bed ${bed ? bed.geometry.index.count / 3 : 0} tris`);
 
   // Surface de l'eau : cellules MNT du lac (dilatées d'1 cellule, les rives cachent les bords)
   {
@@ -269,7 +395,7 @@ export function buildAlpineTerrain(scene, track, dem) {
   }
 
   const isLand = (x, z) => waterAt(x, z) ? false : slopeAt(x, z) < 0.35 && classify(x, z) !== 'rock' && classify(x, z) !== 'snow';
-  return { land, isLand, classify, distTo, heightAt, slopeAt, forestMask, waterAt, WL, houses: [], center: c, span: Math.max(size.x, size.z), minY };
+  return { land, isLand, classify, distTo, heightAt, slopeAt, forestMask, waterAt, WL, houses: [], center: c, span: Math.max(size.x, size.z), minY, roadIndex: field.roadIndex, surfaceAt };
 }
 
 // ---------- Brume de vallée (inspirée de three.js webgpu_custom_fog, portée en WebGL) ----------

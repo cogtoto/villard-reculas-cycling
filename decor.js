@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { Sky } from 'three/examples/jsm/objects/Sky.js';
 import { makeGeo } from './geo.js';
 import { ROAD_Y_LIFT, ROAD_VERGE_LIFT, ROAD_WIDTH } from './road-corridor.js';
+import { makeAsphaltTexture, makeShoulderTexture, perchedEdges, buildRetainingWallGeometry, makeStoneTexture } from './road-surface.js';
 
 // ---------- utilitaires ----------
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
@@ -379,7 +380,8 @@ export function addVegetation(scene, track, terrain) {
 }
 
 // ---------- route ----------
-export function buildRoad(scene, track, width = ROAD_WIDTH, terrain = null, useRealTerrain = false) {
+export function buildRoad(scene, track, width = ROAD_WIDTH, terrain = null, useRealTerrain = false, style = 'classic') {
+  if (style === 'natural' && terrain && !useRealTerrain) return buildNaturalRoad(scene, track, width, terrain);
   const { pts, cum } = track, n = pts.length;
   
   // If using real terrain, smooth DEM elevations for road
@@ -466,6 +468,80 @@ export function buildRoad(scene, track, width = ROAD_WIDTH, terrain = null, useR
   // NO road markings (no center line, no edge lines per user preference for alpine roads)
 }
 
+
+// Villard road (proposal): cracked grey asphalt whose edge crumbles into a
+// gravel/dirt shoulder that fades into the meadow. Same height rules as the
+// classic road (ROAD_Y_LIFT above GPX, depth bias) so it stays flush and clear.
+const ROAD_TILE_M = 12;
+function buildNaturalRoad(scene, track, width, terrain) {
+  const { pts, cum } = track, n = pts.length, h = width / 2, side = THREE.DoubleSide;
+  const OVER = 0.3, SH_UNDER = 0.45, SH_W = 2.6;
+  const normals = pts.map((p, i) => {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz) || 1; return [-tz / L, tx / L];
+  });
+  const ribbon = (offA, offB, yLift, uA, uB, vScale) => {
+    const pos = new Float32Array(n * 6), uv = new Float32Array(n * 4), idx = [];
+    for (let i = 0; i < n; i++) {
+      const [nx, nz] = normals[i], p = pts[i];
+      pos.set([p.x + nx * offA, p.y + yLift, p.z + nz * offA, p.x + nx * offB, p.y + yLift, p.z + nz * offB], i * 6);
+      uv.set([uA, cum[i] / vScale, uB, cum[i] / vScale], i * 4);
+      if (i < n - 1) { const k = i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setIndex(idx); g.computeVertexNormals();
+    return g;
+  };
+  const t0 = performance.now();
+  const asphalt = makeAsphaltTexture(width + OVER * 2, ROAD_TILE_M);
+  const road = new THREE.Mesh(ribbon(h + OVER, -h - OVER, ROAD_Y_LIFT, 0, 1, ROAD_TILE_M), new THREE.MeshStandardMaterial({
+    map: asphalt, roughness: 0.95, metalness: 0, side, alphaTest: 0.5,
+    polygonOffset: true, polygonOffsetFactor: -8, polygonOffsetUnits: -12
+  }));
+  road.receiveShadow = true; road.frustumCulled = false; road.renderOrder = 3; scene.add(road);
+
+  // Shoulders: one ribbon per side, split into uphill (wider gravel, gutter) and downhill groups.
+  const texDown = makeShoulderTexture(SH_W, ROAD_TILE_M, SH_UNDER, false);
+  const texUp = makeShoulderTexture(SH_W, ROAD_TILE_M, SH_UNDER, true);
+  const shMat = (map) => new THREE.MeshStandardMaterial({
+    map, roughness: 1, side, transparent: true, depthWrite: false,
+    polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -4
+  });
+  const mats = [shMat(texDown), shMat(texUp)];
+  // Stacked hairpin legs: close the step with a retaining wall + parapet
+  // instead of a floating edge, and drop the shoulder strip there.
+  const perch = terrain.surfaceAt ? perchedEdges(pts, normals, terrain.surfaceAt, { lift: ROAD_Y_LIFT }) : null;
+  if (perch) {
+    const wg = buildRetainingWallGeometry(pts, cum, normals, perch, ROAD_Y_LIFT);
+    if (wg) {
+      const wall = new THREE.Mesh(wg, new THREE.MeshStandardMaterial({ map: makeStoneTexture(), color: 0xb5afa4, roughness: 1, side }));
+      wall.castShadow = true; wall.receiveShadow = true; wall.frustumCulled = false; scene.add(wall);
+      console.log(`Road: ${wg.userData.segments} retaining-wall segments on perched edges`);
+    }
+  }
+  for (const s of [1, -1]) {
+    const inner = s * (h - SH_UNDER), outer = s * (h - SH_UNDER + SH_W);
+    const g = ribbon(inner, outer, ROAD_VERGE_LIFT, 0, 1, ROAD_TILE_M);
+    // classify each segment, then rebuild the index as two contiguous groups
+    const up = new Uint8Array(n);
+    for (let i = 0; i < n; i++) {
+      const [nx, nz] = normals[i], p = pts[i];
+      up[i] = terrain.heightAt(p.x + nx * s * 17, p.z + nz * s * 17) - p.y > 1.2 ? 1 : 0;
+    }
+    const lists = [[], []];
+    for (let i = 0; i < n - 1; i++) {
+      if (perch && perch.perched[s][i] && perch.perched[s][i + 1]) continue;
+      const k = i * 2; lists[up[i]].push(k, k + 2, k + 1, k + 1, k + 2, k + 3);
+    }
+    g.setIndex([...lists[0], ...lists[1]]);
+    g.clearGroups(); g.addGroup(0, lists[0].length, 0); g.addGroup(lists[0].length, lists[1].length, 1);
+    const mesh = new THREE.Mesh(g, mats);
+    mesh.renderOrder = 2; mesh.receiveShadow = true; mesh.frustumCulled = false; scene.add(mesh);
+  }
+  console.log(`Road: natural surface (${(performance.now() - t0).toFixed(0)} ms textures+mesh)`);
+}
 
 // Toit à deux pans : prisme (base 1×1 en XZ, faîtage selon X, hauteur 1)
 export function makeRoofGeometry() {

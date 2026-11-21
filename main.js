@@ -37,6 +37,7 @@ const ROUTES = {
     // realTerrain disabled - using v0.5.11 procedural relief (correct proportions)
     setupTerrain: (scene, track, dem) => buildAlpineTerrain(scene, track, dem),
     setupAtmosphere: (scene, renderer, sun, sunDir) => alpineAtmosphere(scene, renderer, sun, sunDir),
+    roadStyle: 'natural',
     setupDecor: (scene, track, terrain) => {
       addClouds(scene, terrain.center, terrain.span * 3, 3200);
       const ch = addChalets(scene, track, terrain);
@@ -212,6 +213,7 @@ function formatRideTime(seconds) {
 // --- Scène ---
 const SKY = 0xa8d0f0;
 const scene = new THREE.Scene();
+window.veloScene = scene; // debug / audit hook
 
 // Placeholder fog and background (will be updated per route)
 scene.background = new THREE.Color(SKY);
@@ -429,7 +431,7 @@ function showStats() {
     const name = routeName.replace(/[^a-z0-9]+/gi, '_') + '_' + new Date(S.t0).toISOString().slice(0, 10) + '.tcx';
     try {
       // Get current version from package.json or default
-      const appVersion = '0.5.38';
+      const appVersion = '0.5.39';
       const how = await saveFile(name, buildTcx(S.samples, { name: routeName, version: appVersion }));
       if (how.startsWith('Saved to')) {
         msg.textContent = `✓ ${how} — also shared`;
@@ -774,7 +776,7 @@ function loadRoute() {
       // Use procedural terrain (v0.5.11 style - correct relief proportions)
       const terrain = route.setupTerrain(scene, track, dem);
       
-      buildRoad(scene, track, 4, terrain, false);
+      buildRoad(scene, track, 4, terrain, false, route.roadStyle || 'classic');
       groundAt = terrain.heightAt;
       
       // Create minimap (works with real or procedural terrain)

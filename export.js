@@ -9,7 +9,7 @@ export function toLatLon(origin, x, z) {
 }
 
 // samples : [{ t (ms epoch), lat, lon, alt, dist (m), w, cad, v (m/s), hr? (bpm) }]
-export function buildTcx(samples, { name = 'Velo Virtuel ride', version = '0.5.38' } = {}) {
+export function buildTcx(samples, { name = 'Velo Virtuel ride', version = '0.5.39' } = {}) {
   const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
   const s0 = samples[0], sN = samples[samples.length - 1];
   const secs = (sN.t - s0.t) / 1000, avgW = samples.reduce((a, s) => a + s.w, 0) / samples.length;
