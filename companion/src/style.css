@@ -18,3 +18,10 @@ button:disabled { opacity: .6; }
 .chart-head input { flex: none; width: 52px; padding: 2px 4px; font-size: 12px; }
 #zone { padding: 0 5px; border-radius: 4px; }
 #chart { width: 100%; height: 90px; display: block; margin-top: 4px; background: #0b0d10; border-radius: 6px; }
+
+.hint { margin: 8px 0 0; font-size: 13px; color: #bbb; line-height: 1.35; }
+.hint.error { color: #fc5; }
+button.secondary { margin-top: 8px; background: #3a424c; }
+.device-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.device-list button { text-align: left; background: #2a3138; padding: 10px 12px; font-size: 15px; }
+.device-list button small { display: block; color: #9ad; font-size: 11px; font-weight: 400; margin-top: 2px; }

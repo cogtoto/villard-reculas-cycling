@@ -31,8 +31,11 @@
   </section>
   <section class="card">
     <h2>Heart rate sensor (optional)</h2>
-    <button id="hr-btn">Connect HR Sensor</button>
+    <button id="hr-btn">Scan for HR Sensor</button>
     <div class="status">HR: <span id="hr-status" class="off">disconnected</span></div>
+    <p id="hr-hint" class="hint">Wear the strap, turn Location on, allow Nearby devices, and disconnect the strap from any watch or other app first.</p>
+    <button id="hr-settings-btn" class="secondary" hidden>Open settings</button>
+    <div id="hr-list" class="device-list" hidden></div>
     <div class="metrics">
       <div><b id="hr-bpm">--</b><small>bpm</small></div>
     </div>

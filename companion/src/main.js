@@ -1,6 +1,6 @@
 import { createTrainer } from './trainer.js';
 import { createPowerChart, zoneFor } from './chart.js';
-import { createHrSensor } from './hr-sensor.js';
+import { createHrSensor, classifyBleError, mergeHrCandidates, formatHrDeviceLabel, openHrFixSettings, HR_SCAN_DURATION_MS } from './hr-sensor.js';
 import { KeepAwake } from '@capacitor-community/keep-awake';
 
 const $ = (id) => document.getElementById(id);
@@ -74,6 +74,7 @@ const trainer = createTrainer({
 setInterval(() => { if (trainer.connected || hrSensor.connected) send({ type: 'companion', ...last, ts: Date.now() }); }, 1000);
 
 $('ble-btn').onclick = async () => {
+  try { await hrSensor.stopScan(); } catch { /* ignore */ }
   const b = $('ble-btn'); b.disabled = true; b.textContent = 'Connecting…'; setStatus('ble-status', 'scanning…', 'wait');
   try {
     const r = await trainer.connect();
@@ -94,29 +95,156 @@ const hrSensor = createHrSensor({
   onDisconnect: () => {
     setStatus('hr-status', 'disconnected', 'off');
     $('hr-btn').disabled = false;
-    $('hr-btn').textContent = 'Connect HR Sensor';
+    $('hr-btn').textContent = 'Scan for HR Sensor';
     $('hr-bpm').textContent = '--';
     last.hr = null;
   },
 });
 
-$('hr-btn').onclick = async () => {
+const hrHint = $('hr-hint');
+const hrList = $('hr-list');
+const hrSettings = $('hr-settings-btn');
+const defaultHrHint = 'Wear the strap, turn Location on, allow Nearby devices, and disconnect the strap from any watch or other app first.';
+let hrScanTimer = null;
+let hrFound = new Map();
+let lastHrError = null;
+let hrScanning = false;
+
+function showHrHint(text, isError = false) {
+  hrHint.textContent = text || defaultHrHint;
+  hrHint.className = isError ? 'hint error' : 'hint';
+}
+
+function showHrSettings(code) {
+  lastHrError = code;
+  const label = { 'permission': 'Open app settings', 'bluetooth-off': 'Turn Bluetooth on', 'location-off': 'Turn Location on' }[code];
+  if (label) { hrSettings.textContent = label; hrSettings.hidden = false; }
+  else { hrSettings.hidden = true; }
+}
+
+function renderHrList() {
+  const items = mergeHrCandidates({
+    connected: [...hrFound.values()].filter((d) => d.connected),
+    bonded: [...hrFound.values()].filter((d) => d.bonded && !d.connected),
+    scanned: [...hrFound.values()].filter((d) => !d.connected && !d.bonded),
+  });
+  hrList.hidden = items.length === 0;
+  hrList.innerHTML = '';
+  for (const d of items) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    const label = formatHrDeviceLabel(d);
+    b.innerHTML = `${label.replace(/[<>&]/g, (c) => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}${d.deviceId ? `<small>${d.deviceId}</small>` : ''}`;
+    b.onclick = () => connectHrDevice(d);
+    hrList.appendChild(b);
+  }
+}
+
+function rememberHrDevice(dev) {
+  const key = String(dev.deviceId || '').toLowerCase();
+  if (!key) return;
+  const prev = hrFound.get(key) || {};
+  hrFound.set(key, {
+    deviceId: dev.deviceId,
+    name: (dev.name && String(dev.name).trim()) || prev.name || '',
+    connected: !!(dev.connected || prev.connected),
+    bonded: !!(dev.bonded || prev.bonded),
+  });
+  renderHrList();
+}
+
+async function stopHrScanUi() {
+  if (hrScanTimer) { clearTimeout(hrScanTimer); hrScanTimer = null; }
+  hrScanning = false;
+  try { await hrSensor.stopScan(); } catch { /* ignore */ }
+}
+
+async function connectHrDevice(dev) {
+  await stopHrScanUi();
   const b = $('hr-btn');
   b.disabled = true;
   b.textContent = 'Connecting…';
-  setStatus('hr-status', 'scanning…', 'wait');
+  setStatus('hr-status', 'connecting…', 'wait');
+  showHrHint(`Connecting to ${dev.name || dev.deviceId}…`);
+  showHrSettings(null);
   try {
-    const r = await hrSensor.connect();
+    const r = await hrSensor.connectTo(dev.deviceId, dev.name);
     setStatus('hr-status', r.name, 'on');
     b.textContent = '✓ ' + r.name;
-    // Remember last HR device
+    b.disabled = true;
+    hrList.hidden = true;
+    showHrHint('');
     localStorage.setItem('vv.hrDevice', r.name);
   } catch (e) {
-    log('HR: ' + (e.message || e));
-    setStatus('hr-status', String(e.message || e).slice(0, 60), 'off');
+    const info = classifyBleError(e);
+    log('HR: ' + info.message);
+    setStatus('hr-status', info.message.slice(0, 80), 'off');
+    showHrHint(info.message, true);
+    showHrSettings(info.code);
     b.disabled = false;
-    b.textContent = 'Connect HR Sensor';
+    b.textContent = 'Scan for HR Sensor';
   }
+}
+
+$('hr-btn').onclick = async () => {
+  const b = $('hr-btn');
+  if (hrScanning) {
+    await stopHrScanUi();
+    b.disabled = false;
+    b.textContent = 'Scan again';
+    if (hrFound.size === 0) {
+      const info = classifyBleError(new Error('No heart-rate sensor found'));
+      setStatus('hr-status', 'none found', 'off');
+      showHrHint(info.message, true);
+    } else {
+      setStatus('hr-status', 'pick a sensor', 'wait');
+      showHrHint('Select your heart-rate strap from the list. If it is missing, disconnect it from any watch and scan again.');
+    }
+    return;
+  }
+  await stopHrScanUi();
+  hrFound = new Map();
+  hrList.innerHTML = '';
+  hrList.hidden = true;
+  b.disabled = true;
+  b.textContent = 'Scanning…';
+  setStatus('hr-status', 'scanning…', 'wait');
+  showHrHint('Scanning for nearby sensors and listing paired / already-connected devices…');
+  showHrSettings(null);
+  try {
+    const known = await hrSensor.listKnownDevices();
+    known.forEach(rememberHrDevice);
+    await hrSensor.startScan((dev) => rememberHrDevice(dev));
+    hrScanning = true;
+    hrScanTimer = setTimeout(async () => {
+      await stopHrScanUi();
+      b.disabled = false;
+      b.textContent = 'Scan again';
+      if (hrFound.size === 0) {
+        const info = classifyBleError(new Error('No heart-rate sensor found'));
+        setStatus('hr-status', 'none found', 'off');
+        showHrHint(info.message, true);
+      } else {
+        setStatus('hr-status', 'pick a sensor', 'wait');
+        showHrHint('Select your heart-rate strap from the list. If it is missing, disconnect it from any watch and scan again.');
+      }
+    }, HR_SCAN_DURATION_MS);
+    b.disabled = false;
+    b.textContent = 'Stop scan';
+  } catch (e) {
+    const info = classifyBleError(e);
+    log('HR: ' + info.message);
+    setStatus('hr-status', info.message.slice(0, 80), 'off');
+    showHrHint(info.message, true);
+    showHrSettings(info.code);
+    b.disabled = false;
+    b.textContent = 'Scan for HR Sensor';
+  }
+};
+
+hrSettings.onclick = async () => {
+  try { await openHrFixSettings(lastHrError); }
+  catch (e) { log('HR settings: ' + (e.message || e)); }
 };
 
 // Clear HR if no data for >5s

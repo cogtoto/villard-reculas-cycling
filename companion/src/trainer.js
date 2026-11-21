@@ -31,7 +31,7 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
 
   async function connect() {
     const t0 = Date.now();
-    await BleClient.initialize({ androidNeverForLocation: true });
+    await BleClient.initialize({ androidNeverForLocation: false });
     
     // Request device with service filters to show only trainers/power meters
     const dev = await BleClient.requestDevice({
