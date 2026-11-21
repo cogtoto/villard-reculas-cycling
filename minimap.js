@@ -48,7 +48,7 @@ export function createMinimap(track, size = 180, classify = null, onPick = null,
   dot(track.pts[0], '#9ece6a'); dot(track.pts[track.pts.length - 1], '#f7768e');
   b.fillStyle = '#e8eefc'; b.font = `${10 * dpr}px system-ui`; b.fillText('N ↑', 6 * dpr, 14 * dpr);
 
-  return function update(pos, dir) {
+  const update = function(pos, dir) {
     g.clearRect(0, 0, cv.width, cv.height);
     g.drawImage(bg, 0, 0);
     const [x, y] = P(pos.x, pos.z), a = Math.atan2(dir.z, dir.x);
@@ -57,4 +57,8 @@ export function createMinimap(track, size = 180, classify = null, onPick = null,
     g.beginPath(); g.moveTo(8 * dpr, 0); g.lineTo(-5 * dpr, 5 * dpr); g.lineTo(-2 * dpr, 0); g.lineTo(-5 * dpr, -5 * dpr); g.closePath();
     g.fill(); g.stroke(); g.restore();
   };
+  
+  // Return both update function and canvas element for show/hide control
+  update.canvas = cv;
+  return update;
 }

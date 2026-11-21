@@ -3,6 +3,8 @@
 import * as THREE from 'three';
 import { makeRoofGeometry } from './decor.js';
 import { PALETTE } from './palette.js';
+import { addCloudsToSky } from './clouds.js';
+import { buildRoadIndex, fitHeightToRoadCorridor, TERRAIN_CELL_SIZE, VEG_CLEARANCE, ROAD_BED_CELL, ROAD_BLEND_END, ROAD_Y_LIFT, ROAD_CLEARANCE, ROAD_HARD_HALF } from './road-corridor.js';
 
 function hash(x, y) { const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453; return s - Math.floor(s); }
 function vnoise(x, y) {
@@ -19,7 +21,7 @@ const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 214748364
 export const SNOW_LINE = 2150; // altitude moyenne de la limite de neige (m)
 export const ZONE_COLORS = { meadow: 'rgba(130,165,90,.75)', forest: 'rgba(45,85,50,.8)', rock: 'rgba(140,135,128,.8)', snow: 'rgba(240,244,250,.85)', village: 'rgba(200,170,130,.85)', water: 'rgba(79,123,132,.95)', shore: 'rgba(138,140,136,.9)' };
 
-export function buildAlpineTerrain(scene, track, dem) {
+export function createAlpineHeightField(track, dem, { cellSize = TERRAIN_CELL_SIZE } = {}) {
   const pts = track.pts;
   const box = new THREE.Box3(); pts.forEach((p) => box.expandByPoint(new THREE.Vector3(p.x, 0, p.z)));
   const c = box.getCenter(new THREE.Vector3()), size = box.getSize(new THREE.Vector3());
@@ -78,35 +80,239 @@ export function buildAlpineTerrain(scene, track, dem) {
   };
   const nearWater = (x, z) => waterAt(x + 30, z) || waterAt(x - 30, z) || waterAt(x, z + 30) || waterAt(x, z - 30);
   c.set(x0 + W / 2, 0, z0 + H / 2);
-  const CS = 40, SX = Math.round(W / CS), SZ = Math.round(H / CS); // maille ≈ 40 m (MNT ≈ 20–28 m)
+  const CS = cellSize, SX = Math.round(W / CS), SZ = Math.round(H / CS);
+  const roadIndex = buildRoadIndex(pts);
   const geo = new THREE.PlaneGeometry(W, H, SX, SZ); geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i) + c.x, z = pos.getZ(i) + c.z;
     let y = demAt(x, z);
     const nr = nearest(x, z, 1);
-    if (nr.d < 300) {
-      // près de la chaussée : altitude GPX lissée (écart MNT/GPX médian ≈ 6 m), talus déblai/remblai
-      const t = THREE.MathUtils.smoothstep(nr.d, 14, 70);
-      y = (nr.y - 0.3) * (1 - t) + y * t;
-      y = Math.min(y, nr.y - 0.4 + Math.max(0, nr.d - 7) * 0.8);
-      y = Math.max(y, nr.y - 0.4 - Math.max(0, nr.d - 7) * 1.0);
-    }
+    // Fit (raise or lower) to the road minus a small epsilon, then blend
+    // to natural ground over a short shoulder — no deep trench.
+    y = fitHeightToRoadCorridor(y, x, z, roadIndex);
     if (nr.d > 25 && waterAt(x, z)) y = Math.min(y, WL - 4); // fond du lac sous la surface
     pos.setY(i, y);
   }
   geo.computeVertexNormals();
-  const heightAt = (x, z) => {
+  // Heights as fitted, before clearLandUnderRoad() pushes the coarse mesh
+  // below the corridor bed. Queries (trees, chalets, camera) keep using these.
+  const baseY = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) baseY[i] = pos.getY(i);
+  const meshHeightAt = (x, z) => {
     const gx = ((x - x0) / W) * SX, gz = ((z - z0) / H) * SZ;
     const i = Math.max(0, Math.min(SX - 1, Math.floor(gx))), j = Math.max(0, Math.min(SZ - 1, Math.floor(gz)));
-    const fx = gx - i, fz = gz - j, Y = (a, b) => pos.getY(b * (SX + 1) + a);
+    const fx = gx - i, fz = gz - j, Y = (a, b) => baseY[b * (SX + 1) + a];
     return (Y(i, j) * (1 - fx) + Y(i + 1, j) * fx) * (1 - fz) + (Y(i, j + 1) * (1 - fx) + Y(i + 1, j + 1) * fx) * fz;
   };
+  // Query height uses the continuous corridor fit so the 20 m mesh cannot
+  // leave the ribbon perched or buried between vertices.
+  const heightAt = (x, z) => fitHeightToRoadCorridor(meshHeightAt(x, z), x, z, roadIndex);
   const slopeAt = (x, z) => { const e = 20; return Math.hypot(heightAt(x + e, z) - heightAt(x - e, z), heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e); };
   const forestMask = (x, z) => fbm(x * 0.0018 + 40, z * 0.0018 - 13, 4);
 
-  // Zones : prairie / forêt / roche / neige (+ village au départ)
-  const start = pts[0];
+  return {
+    pts, box, c, size, minY, nearest, distTo, demAt, toLL, toXZ, M, HD,
+    waterAt, nearWater, wMask, WL, x0, z0, W, H, CS, SX, SZ, geo, pos, baseY,
+    heightAt, meshHeightAt, slopeAt, forestMask, roadIndex
+  };
+}
+
+
+// Walk the paved surface (and the flush shoulders) of every road leg.
+// cb(x, z, roadY, off) for points every `step` metres along and across.
+export function forEachRoadSurfacePoint(roadIndex, offsets, step, cb) {
+  const D = roadIndex.dense;
+  for (let k = 0; k < D.length - 1; k++) {
+    const A = D[k], B = D[k + 1], L = Math.hypot(B.x - A.x, B.z - A.z);
+    if (L < 1e-6) continue;
+    const nx = -(B.z - A.z) / L, nz = (B.x - A.x) / L, n = Math.max(1, Math.ceil(L / step));
+    for (let q = 0; q < n; q++) {
+      const t = q / n, x = A.x + (B.x - A.x) * t, z = A.z + (B.z - A.z) * t, y = A.y + (B.y - A.y) * t;
+      for (const off of offsets) cb(x + nx * off, z + nz * off, y + ROAD_Y_LIFT, off);
+    }
+  }
+}
+
+// The coarse 20 m mesh interpolates across the road between fitted
+// vertices, so on steep cross-slopes a triangle can rise metres above the
+// tarmac (the road "disappears into the grass"). Push only the vertices of
+// offending triangles below the corridor; the 4 m bed, extended over every
+// touched quad, stays the visible ground there.
+export function clearLandUnderRoad(field, { margin = 0.35, half = ROAD_HARD_HALF } = {}) {
+  const { pos, x0, z0, W, H, SX, SZ, roadIndex } = field;
+  const offs = []; for (let o = -half; o <= half + 1e-6; o += 1) offs.push(o);
+  const cw = W / SX, ch = H / SZ, lowered = new Set();
+  const vi = (i, j) => j * (SX + 1) + i;
+  let fixes = 0;
+  for (let pass = 0; pass < 8; pass++) {
+    let bad = 0;
+    forEachRoadSurfacePoint(roadIndex, offs, 1, (x, z, roadY) => {
+      const gx = (x - x0) / cw, gz = (z - z0) / ch, i = Math.floor(gx), j = Math.floor(gz);
+      if (i < 0 || j < 0 || i >= SX || j >= SZ) return;
+      const fx = gx - i, fz = gz - j;
+      // PlaneGeometry split: (a=i,j  b=i,j+1  d=i+1,j) and (b, c=i+1,j+1, d)
+      const tri = fx + fz <= 1 ? [vi(i, j), vi(i, j + 1), vi(i + 1, j)] : [vi(i, j + 1), vi(i + 1, j + 1), vi(i + 1, j)];
+      const h = landHeight(pos, vi, i, j, fx, fz);
+      const target = roadY - ROAD_Y_LIFT - ROAD_CLEARANCE - margin;
+      if (h <= target) return;
+      bad++;
+      const dlt = h - target + 0.01;
+      for (const v of tri) { pos.setY(v, pos.getY(v) - dlt); lowered.add(v); }
+    });
+    fixes += bad;
+    if (!bad) break;
+  }
+  if (lowered.size) { pos.needsUpdate = true; field.geo.computeVertexNormals(); }
+  const quads = new Set();
+  for (const v of lowered) { const i = v % (SX + 1), j = (v / (SX + 1)) | 0; for (const [a, b] of [[0, 0], [-1, 0], [0, -1], [-1, -1]]) quads.add(`${i + a},${j + b}`); }
+  return { lowered: lowered.size, fixes, quads };
+}
+function landHeight(pos, vi, i, j, fx, fz) {
+  if (fx + fz <= 1) { const a = pos.getY(vi(i, j)), b = pos.getY(vi(i, j + 1)), d = pos.getY(vi(i + 1, j)); return a + (d - a) * fx + (b - a) * fz; }
+  const b = pos.getY(vi(i, j + 1)), c = pos.getY(vi(i + 1, j + 1)), d = pos.getY(vi(i + 1, j));
+  return c + (b - c) * (1 - fx) + (d - c) * (1 - fz);
+}
+
+export function buildRoadBedHeights(field, landQuads = null, { fix = true } = {}) {
+  const { roadIndex, demAt, meshHeightAt, x0, z0, W, H, SX, SZ } = field;
+  if (!roadIndex) return null;
+  const CS = ROAD_BED_CELL;
+  const radius = ROAD_BLEND_END;
+  const r = Math.ceil(radius / CS);
+  const cells = new Set();
+  for (const p of roadIndex.dense) {
+    const cx = Math.round(p.x / CS), cz = Math.round(p.z / CS);
+    const r2 = (r + 0.5) * (r + 0.5);
+    for (let i = -r; i <= r; i++) {
+      for (let j = -r; j <= r; j++) {
+        if (i * i + j * j > r2) continue;
+        cells.add(`${cx + i},${cz + j}`);
+      }
+    }
+  }
+  // Extra cells over coarse quads that clearLandUnderRoad() pushed down:
+  // there the bed reproduces the old coarse surface so the landscape is unchanged.
+  const extra = new Set();
+  if (landQuads && landQuads.size) {
+    const cw = W / SX, ch = H / SZ;
+    for (const q of landQuads) {
+      const c = q.indexOf(','), qi = +q.slice(0, c), qj = +q.slice(c + 1);
+      const ax = Math.floor((x0 + qi * cw) / CS) - 1, bx = Math.ceil((x0 + (qi + 1) * cw) / CS) + 1;
+      const az = Math.floor((z0 + qj * ch) / CS) - 1, bz = Math.ceil((z0 + (qj + 1) * ch) / CS) + 1;
+      for (let ix = ax; ix <= bx; ix++) for (let iz = az; iz <= bz; iz++) { const k = `${ix},${iz}`; if (!cells.has(k)) extra.add(k); }
+    }
+  }
+  const src = demAt || meshHeightAt;
+  const posMap = new Map();
+  for (const [set, fn] of [[cells, src], [extra, meshHeightAt]]) for (const key of set) {
+    const comma = key.indexOf(',');
+    const ix = +key.slice(0, comma), iz = +key.slice(comma + 1);
+    const x = ix * CS, z = iz * CS;
+    const y = fitHeightToRoadCorridor(fn(x, z), x, z, roadIndex);
+    posMap.set(key, { x, y, z, ix, iz });
+  }
+  // Interpolation between 4 m nodes of two hairpin legs can still lift a
+  // bed triangle over the tarmac: lower just the offending nodes.
+  const node = (ix, iz) => posMap.get(`${ix},${iz}`);
+  let fixes = 0;
+  const offs = []; for (let o = -2.4; o <= 2.4 + 1e-6; o += 0.4) offs.push(o);
+  for (let pass = 0; fix && pass < 24; pass++) {
+    let bad = 0;
+    forEachRoadSurfacePoint(roadIndex, offs, 1, (x, z, roadY) => {
+      const gx = x / CS, gz = z / CS, ix = Math.floor(gx), iz = Math.floor(gz), fx = gx - ix, fz = gz - iz;
+      const a = node(ix, iz), b = node(ix + 1, iz), c = node(ix, iz + 1), d = node(ix + 1, iz + 1);
+      if (!a || !b || !c || !d) return;
+      const lo = fx + fz <= 1;
+      const tri = lo ? [a, b, c] : [d, c, b];
+      const wts = lo ? [1 - fx - fz, fx, fz] : [fx + fz - 1, 1 - fx, 1 - fz];
+      const h = tri[0].y * wts[0] + tri[1].y * wts[1] + tri[2].y * wts[2];
+      // the asphalt carries a strong depth bias, so only a bed that actually
+      // rises through the tarmac needs lowering
+      if (h <= roadY - 0.03) return;
+      const target = roadY - 0.06;
+      bad++;
+      // smallest change: lower only nodes above the target, in proportion to their weight
+      let ws = 0; for (let k = 0; k < 3; k++) if (tri[k].y > target) ws += wts[k];
+      const dl = (h - target + 0.01) / Math.max(ws, 1e-3);
+      for (let k = 0; k < 3; k++) if (tri[k].y > target) tri[k].y = Math.max(target, tri[k].y - dl);
+    });
+    fixes += bad;
+    if (!bad) break;
+  }
+  return { posMap, cells: cells.size, extra: extra.size, fixes };
+}
+
+// Fine (4 m) grass bed along the road, using the same terrain texture.
+// This carries the 6 m flush band and 8 m blend at a resolution the 20 m
+// alpine mesh cannot represent, so the ribbon does not look perched or trenched.
+export function buildRoadCorridorMesh(field, texture, landQuads = null) {
+  const bed = buildRoadBedHeights(field, landQuads);
+  if (!bed || !texture) return null;
+  const { posMap } = bed;
+  const { x0, z0, W, H } = field;
+  const positions = [], uvs = [], idx = [];
+  const vertIndex = new Map();
+  const vert = (key) => {
+    if (vertIndex.has(key)) return vertIndex.get(key);
+    const p = posMap.get(key);
+    const i = positions.length / 3;
+    positions.push(p.x, p.y, p.z);
+    uvs.push((p.x - x0) / W, 1 - (p.z - z0) / H);
+    vertIndex.set(key, i);
+    return i;
+  };
+  for (const p of posMap.values()) {
+    const k10 = `${p.ix + 1},${p.iz}`, k01 = `${p.ix},${p.iz + 1}`, k11 = `${p.ix + 1},${p.iz + 1}`;
+    if (!posMap.has(k10) || !posMap.has(k01) || !posMap.has(k11)) continue;
+    const a = vert(`${p.ix},${p.iz}`), b = vert(k10), c = vert(k01), d = vert(k11);
+    idx.push(a, c, b, b, c, d);
+  }
+  if (!idx.length) return null;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({
+    map: texture,
+    roughness: 1,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -2
+  }));
+  mesh.receiveShadow = true;
+  mesh.renderOrder = 1;
+  mesh.frustumCulled = false;
+  mesh.userData.bed = bed;
+  return mesh;
+}
+
+// Height of what is actually drawn (coarse terrain or corridor bed, whichever is higher).
+export function makeSurfaceSampler(field, bed) {
+  const { pos, x0, z0, W, H, SX, SZ } = field, cw = W / SX, ch = H / SZ, vi = (i, j) => j * (SX + 1) + i;
+  const CS = ROAD_BED_CELL, N = (ix, iz) => bed && bed.posMap.get(`${ix},${iz}`);
+  return (x, z) => {
+    let y = -Infinity;
+    const gx = (x - x0) / cw, gz = (z - z0) / ch, i = Math.floor(gx), j = Math.floor(gz);
+    if (i >= 0 && j >= 0 && i < SX && j < SZ) y = landHeight(pos, vi, i, j, gx - i, gz - j);
+    const bx = x / CS, bz = z / CS, ix = Math.floor(bx), iz = Math.floor(bz), fx = bx - ix, fz = bz - iz;
+    const a = N(ix, iz), b = N(ix + 1, iz), c = N(ix, iz + 1), d = N(ix + 1, iz + 1);
+    if (a && b && c && d) y = Math.max(y, fx + fz <= 1 ? a.y + (b.y - a.y) * fx + (c.y - a.y) * fz : d.y + (c.y - d.y) * (1 - fx) + (b.y - d.y) * (1 - fz));
+    return y;
+  };
+}
+
+export function buildAlpineTerrain(scene, track, dem) {
+  const field = createAlpineHeightField(track, dem);
+  const {
+    pts, box, c, size, minY, distTo, toXZ, M,
+    waterAt, nearWater, wMask, WL, x0, z0, W, H, SX, SZ, geo, pos,
+    heightAt, slopeAt, forestMask
+  } = field;
+
+  // Zones : prairie / forêt / roche / neige (+ village at the finish, Villard-Reculas)
+  const finish = pts[pts.length - 1];
   const classify = (x, z) => {
     if (waterAt(x, z) && distTo(x, z) > 12) return 'water';
     if (nearWater(x, z) && heightAt(x, z) < WL + 3 && distTo(x, z) > 8) return 'shore';
@@ -115,7 +321,7 @@ export function buildAlpineTerrain(scene, track, dem) {
     const snowLine = SNOW_LINE + (n - 0.5) * 350 + Math.max(0, s - 0.55) * 700;
     if (y > snowLine || y > SNOW_LINE + 650) return 'snow';
     if (s > 0.9 || y > 2250 + n * 200) return 'rock';
-    if (Math.hypot(x - start.x, z - start.z) < 260 + n * 80) return 'village';
+    if (Math.hypot(x - finish.x, z - finish.z) < 260 + n * 80) return 'village';
     if (y < 2000 && forestMask(x, z) > 0.47 - (y < 1000 ? 0.05 : 0) && distTo(x, z) > 12) return 'forest';
     return 'meadow';
   };
@@ -129,15 +335,24 @@ export function buildAlpineTerrain(scene, track, dem) {
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
   for (let j = 0; j < FZ; j++) for (let i = 0; i < FX; i++) {
     const x = x0 + (i + 0.5) * PX, z = z0 + (j + 0.5) * PX, k = classify(x, z), r = hash(i, j), n = fbm(x * 0.004, z * 0.004, 3);
+    // Micro-detail noise for grass/rock texture (high frequency)
+    const microGrass = fbm(x * 0.15, z * 0.15, 2) * 0.15;
+    const microRock = fbm(x * 0.08, z * 0.08, 3) * 0.2 + hash(i * 7, j * 11) * 0.1;
+    
     let col;
     if (k === 'water') col = mix(COL.water, COL.water2, r * 0.3);
-    else if (k === 'shore') col = mix(COL.shore, COL.rock, r * 0.4);
-    else if (k === 'snow') col = mix(COL.snow, COL.snowShade, r * 0.5 + n * 0.3); // blanc bleuté, légères ombres
-    else if (k === 'rock') col = mix(COL.rock, COL.rock2, n);
-    else if (k === 'forest') col = mix(COL.forest, COL.forest2, r * 0.6);
-    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5);
-    else { const y = heightAt(x, z); col = mix(COL.meadow, COL.meadow2, Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600))); }
-    const v = 0.9 + r * 0.14, o = (j * FX + i) * 4;
+    else if (k === 'shore') col = mix(COL.shore, COL.rock, r * 0.4 + microRock);
+    else if (k === 'snow') col = mix(COL.snow, COL.snowShade, r * 0.5 + n * 0.3); // white-blue, slight shadows
+    else if (k === 'rock') col = mix(COL.rock, COL.rock2, n * 0.7 + microRock * 0.3);
+    else if (k === 'forest') col = mix(COL.forest, COL.forest2, r * 0.6 + microGrass * 0.4);
+    else if (k === 'village') col = mix(COL.village, COL.meadow, r * 0.5 + microGrass * 0.3);
+    else { 
+      // Meadow: blend with altitude and add grass texture detail
+      const y = heightAt(x, z); 
+      const altBlend = Math.min(1, n * 0.8 + Math.max(0, (y - 1700) / 600));
+      col = mix(COL.meadow, COL.meadow2, altBlend + microGrass * 0.3); 
+    }
+    const v = 0.88 + r * 0.18, o = (j * FX + i) * 4;
     D[o] = Math.min(255, col[0] * v); D[o + 1] = Math.min(255, col[1] * v); D[o + 2] = Math.min(255, col[2] * v); D[o + 3] = 255;
   }
   g2.putImageData(img, 0, 0);
@@ -145,6 +360,11 @@ export function buildAlpineTerrain(scene, track, dem) {
   const land = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map, roughness: 1 }));
   land.position.set(c.x, 0, c.z); land.receiveShadow = true;
   scene.add(land);
+  const cleared = clearLandUnderRoad(field);
+  const bed = buildRoadCorridorMesh(field, map, cleared.quads);
+  if (bed) scene.add(bed);
+  const surfaceAt = makeSurfaceSampler(field, bed && bed.userData.bed);
+  console.log(`Road clearance: ${cleared.lowered} coarse vertices lowered (${cleared.fixes} fixes), bed ${bed ? bed.geometry.index.count / 3 : 0} tris`);
 
   // Surface de l'eau : cellules MNT du lac (dilatées d'1 cellule, les rives cachent les bords)
   {
@@ -175,7 +395,7 @@ export function buildAlpineTerrain(scene, track, dem) {
   }
 
   const isLand = (x, z) => waterAt(x, z) ? false : slopeAt(x, z) < 0.35 && classify(x, z) !== 'rock' && classify(x, z) !== 'snow';
-  return { land, isLand, classify, distTo, heightAt, slopeAt, forestMask, waterAt, WL, houses: [], center: c, span: Math.max(size.x, size.z), minY };
+  return { land, isLand, classify, distTo, heightAt, slopeAt, forestMask, waterAt, WL, houses: [], center: c, span: Math.max(size.x, size.z), minY, roadIndex: field.roadIndex, surfaceAt };
 }
 
 // ---------- Brume de vallée (inspirée de three.js webgpu_custom_fog, portée en WebGL) ----------
@@ -219,48 +439,197 @@ export function installHeightFog() {
 #endif`;
 }
 
-// Ciel : dégradé comme l'exemple (couleur de brume à l'horizon → ciel clair) + halo du soleil
+// Zwift-style: beautiful deep blue sky, vivid colors, warm sunny light
 export function alpineAtmosphere(scene, renderer, sun, sunDir, opts = {}) {
-  const fogCol = new THREE.Color(0xd0dee7), skyTop = new THREE.Color(0xbcd4ea);
-  const base = opts.fogBase ?? 640, top = opts.fogTop ?? 1080;
-  scene.fog = new THREE.Fog(fogCol, base, top); // near/far = altitudes basse/haute de la bande de brume
-  scene.background = fogCol;
-  scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; }); // masque le Sky physique
-  // soleil bas et chaud (élévation 18°, azimut 150°)
-  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 18), THREE.MathUtils.degToRad(150));
-  sun.color.set(0xffd9b0); sun.intensity = 3.2;
-  renderer.toneMappingExposure = 0.62;
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(40000, 32, 16), new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { uHor: { value: fogCol }, uTop: { value: skyTop }, uSun: { value: sunDir } },
-    vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0); gl_Position = p.xyww; }',
-    fragmentShader: `uniform vec3 uHor, uTop, uSun; varying vec3 vD;
-      void main(){ float h = max(vD.y, 0.0); vec3 c = mix(uHor, uTop, pow(h, 0.55));
-        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 24.0); c += vec3(1.0, 0.85, 0.65) * g * 0.35;
-        gl_FragColor = vec4(c, 1.0);
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
+  // Deep blue sky with light blue horizon (Zwift reference) - brighter for visibility
+  const horizonBlue = new THREE.Color(0xe0f0ff);
+  const deepBlue = new THREE.Color(0x4499ff);
+  
+  // Light fog matched to horizon blue
+  const base = opts.fogBase ?? 800, top = opts.fogTop ?? 1400;
+  scene.fog = new THREE.Fog(horizonBlue, base, top);
+  scene.background = deepBlue; // Deep blue background fallback
+  
+  scene.traverse((o) => { if (o.material && o.material.uniforms && o.material.uniforms.sunPosition) o.visible = false; });
+  
+  // Warm sunny light (handled by sky-system.js now)
+  sunDir.setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 25), THREE.MathUtils.degToRad(140));
+  sun.color.set(0xfff6e8); sun.intensity = 2.4;
+  renderer.toneMappingExposure = 1.1; // Brighter for vivid colors
+  
+  // Deep blue sky dome (Zwift-style) - renders FIRST behind everything
+  const skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, 
+    depthWrite: false,
+    depthTest: true,
+    fog: false,
+    toneMapped: false,
+    uniforms: { uHor: { value: horizonBlue }, uTop: { value: deepBlue }, uSun: { value: sunDir } },
+    vertexShader: `
+      varying vec3 vD;
+      void main() {
+        vD = normalize(position);
+        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        gl_Position = p.xyww; // Force to far plane
       }`,
-  }));
-  dome.frustumCulled = false; dome.renderOrder = -1;
+    fragmentShader: `
+      uniform vec3 uHor, uTop, uSun;
+      varying vec3 vD;
+      void main() {
+        float h = clamp(vD.y, 0.0, 1.0);
+        vec3 c = mix(uHor, uTop, pow(h, 0.28));
+        float g = pow(max(dot(normalize(vD), normalize(uSun)), 0.0), 32.0);
+        c += vec3(1.0, 0.95, 0.85) * g * 0.15;
+        gl_FragColor = vec4(c, 1.0);
+      }`,
+  });
+  // Small dome that follows camera
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), skyMat);
+  dome.frustumCulled = false;
+  dome.renderOrder = -1000; // Render first, behind everything
   scene.add(dome);
-  return { dome, fog: scene.fog };
+  
+  // Store reference for camera following
+  window._skyDome = dome;
+  
+  // Add white clouds
+  const clouds = addCloudsToSky(scene, new THREE.Vector3(0, 0, 0), 450000, 6);
+  
+  return { dome, clouds, fog: scene.fog };
 }
 
-// Conifère "blob" comme ForestGenerator (icosaèdre effilé, normales douces, ombre interne → pointe éclairée)
+// Vivid green alpine conifer (Zwift-style, not black silhouette)
 function conifer() {
-  const g = new THREE.IcosahedronGeometry(1, 1);
-  const p = g.attributes.position, n = g.attributes.normal, col = new Float32Array(p.count * 3);
-  const deep = new THREE.Color(0x1d3318), bright = new THREE.Color(0x5d7a37), t = new THREE.Color();
-  for (let i = 0; i < p.count; i++) {
-    const ux = p.getX(i), uy = p.getY(i), uz = p.getZ(i), h = (uy + 1) / 2;
-    const lump = 1 + 0.12 * Math.sin(ux * 7.1 + uz * 5.3 + uy * 3.7);
-    const r = (1 - 0.72 * h) * lump;
-    p.setXYZ(i, ux * r * 2.2, h * 9, uz * r * 2.2);
-    const inv = 1 / Math.hypot(ux, 0.55, uz); n.setXYZ(i, ux * inv, 0.55 * inv, uz * inv);
-    t.copy(deep).lerp(bright, h * 0.9); col.set([t.r, t.g, t.b], i * 3);
+  const positions = [], indices = [], colors = [];
+  const deep = new THREE.Color(0x3a5a38), mid = new THREE.Color(0x4a6b40), bright = new THREE.Color(0x5a7c48);
+  
+  // Trunk (dark brown cylinder)
+  const trunkH = 1.2, trunkR = 0.12;
+  const trunkSegs = 6;
+  for (let i = 0; i <= trunkSegs; i++) {
+    const angle = (i / trunkSegs) * Math.PI * 2;
+    const x = Math.cos(angle) * trunkR, z = Math.sin(angle) * trunkR;
+    positions.push(x, 0, z, x, trunkH, z);
+    const trunkCol = new THREE.Color(0x3a2818);
+    colors.push(trunkCol.r, trunkCol.g, trunkCol.b, trunkCol.r * 0.7, trunkCol.g * 0.7, trunkCol.b * 0.7);
+    if (i < trunkSegs) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, c, b, b, c, d);
+    }
   }
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  
+  // Needle tiers (6 tiers, decreasing size toward top)
+  const tiers = 6;
+  let baseIdx = positions.length / 3;
+  for (let tier = 0; tier < tiers; tier++) {
+    const tierY = 0.8 + tier * 1.4;
+    const tierR = (2.2 - tier * 0.32) * (0.9 + Math.random() * 0.2);
+    const tierH = 0.9 - tier * 0.05;
+    const segs = 8;
+    const tipIdx = baseIdx;
+    const col = new THREE.Color().copy(deep).lerp(mid, tier / tiers).lerp(bright, 0.3 + tier * 0.1);
+    positions.push(0, tierY + tierH, 0);
+    colors.push(col.r * 1.2, col.g * 1.2, col.b * 1.2);
+    baseIdx++;
+    for (let i = 0; i <= segs; i++) {
+      const angle = (i / segs) * Math.PI * 2;
+      const x = Math.cos(angle) * tierR, z = Math.sin(angle) * tierR;
+      positions.push(x, tierY, z);
+      const baseCol = new THREE.Color().copy(col).multiplyScalar(0.7 + Math.random() * 0.3);
+      colors.push(baseCol.r, baseCol.g, baseCol.b);
+      if (i < segs) {
+        indices.push(tipIdx, baseIdx + i, baseIdx + i + 1);
+      }
+    }
+    baseIdx += segs + 1;
+  }
+  
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
+  return g;
+}
+
+// Realistic leafy tree with clustered canopy (Zwift-style)
+function createLeafyTree() {
+  const positions = [], indices = [], colors = [];
+  let vertexOffset = 0;
+  
+  // Visible trunk (brown)
+  const trunkH = 3.5, trunkR = 0.22;
+  const trunkSegs = 6;
+  const trunkColor = new THREE.Color(0x5a4032);
+  for (let i = 0; i <= trunkSegs; i++) {
+    const angle = (i / trunkSegs) * Math.PI * 2;
+    const x = Math.cos(angle) * trunkR, z = Math.sin(angle) * trunkR;
+    positions.push(x, 0, z, x, trunkH, z);
+    colors.push(trunkColor.r * 0.7, trunkColor.g * 0.7, trunkColor.b * 0.7, trunkColor.r, trunkColor.g, trunkColor.b);
+    if (i < trunkSegs) {
+      const a = i * 2, b = a + 1, c = a + 2, d = a + 3;
+      indices.push(a, c, b, b, c, d);
+    }
+  }
+  vertexOffset = positions.length / 3;
+  
+  // Clustered canopy spheres (5-7 spheres with noise displacement)
+  const numSpheres = 5 + Math.floor(rand() * 3);
+  const baseGreen = new THREE.Color(0x6a9048);
+  const lightGreen = new THREE.Color(0x7fab58);
+  
+  for (let s = 0; s < numSpheres; s++) {
+    const sphereR = 1.4 + rand() * 0.8;
+    const offsetX = (rand() - 0.5) * 2.2;
+    const offsetY = 3.0 + rand() * 1.8;
+    const offsetZ = (rand() - 0.5) * 2.2;
+    
+    const segments = 8;
+    const color = new THREE.Color().copy(baseGreen).lerp(lightGreen, rand());
+    
+    // Create sphere with noise displacement
+    for (let lat = 0; lat <= segments; lat++) {
+      const theta = (lat / segments) * Math.PI;
+      const sinTheta = Math.sin(theta);
+      const cosTheta = Math.cos(theta);
+      
+      for (let lon = 0; lon <= segments; lon++) {
+        const phi = (lon / segments) * Math.PI * 2;
+        const sinPhi = Math.sin(phi);
+        const cosPhi = Math.cos(phi);
+        
+        // Noise displacement for organic look
+        const noise = (rand() - 0.5) * 0.15;
+        const r = sphereR * (1 + noise);
+        
+        const x = r * sinTheta * cosPhi + offsetX;
+        const y = r * cosTheta + offsetY;
+        const z = r * sinTheta * sinPhi + offsetZ;
+        
+        positions.push(x, y, z);
+        const lightVar = 0.85 + rand() * 0.3;
+        colors.push(color.r * lightVar, color.g * lightVar, color.b * lightVar);
+      }
+    }
+    
+    // Create sphere indices
+    const baseVertex = vertexOffset;
+    for (let lat = 0; lat < segments; lat++) {
+      for (let lon = 0; lon < segments; lon++) {
+        const current = baseVertex + lat * (segments + 1) + lon;
+        const next = current + segments + 1;
+        indices.push(current, next, current + 1);
+        indices.push(current + 1, next, next + 1);
+      }
+    }
+    vertexOffset += (segments + 1) * (segments + 1);
+  }
+  
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+  g.setIndex(indices);
+  g.computeVertexNormals();
   return g;
 }
 
@@ -274,7 +643,7 @@ export function addForest(scene, track, terrain, max = 14000) {
     const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
     const zc = terrain.classify(x, z);
     if (zc !== 'forest' && !(zc === 'village' && rand() < 0.04)) continue; // + sapins isolés au village
-    if (terrain.distTo(x, z) < 9) continue;
+    if (terrain.distTo(x, z) < VEG_CLEARANCE) continue;
     if (terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 120)) continue;
     const y = terrain.heightAt(x, z);
     const item = { x, y: y - 0.3, z, s: 0.7 + rand() * rand() * 1.1, r: rand() * 6.28 };
@@ -286,21 +655,33 @@ export function addForest(scene, track, terrain, max = 14000) {
     list.forEach((it, i) => { q.setFromAxisAngle(up, it.r); sc.setScalar(it.s); v.set(it.x, it.y + yOff * it.s, it.z); im.setMatrixAt(i, m.compose(v, q, sc)); });
     im.castShadow = shadow; scene.add(im);
   };
-  const trunk = new THREE.MeshStandardMaterial({ color: 0x4a3524, roughness: 1 });
-  const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95 });
-  const leafMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, flatShading: true });
-  // sapins : un seul InstancedMesh (+ couleur par instance, échelle variée façon exemple)
+  const firMat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 });
+  const leafyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, flatShading: false });
+  
+  // Sapins (conifers)
   const fim = new THREE.InstancedMesh(conifer(), firMat, firs.length), cc = new THREE.Color();
   firs.forEach((it, i) => {
     q.setFromAxisAngle(up, it.r); const k = it.s; sc.set(k * (0.85 + rand() * 0.3), k * (0.8 + rand() * 0.5), k * (0.85 + rand() * 0.3));
     v.set(it.x, it.y - 0.5, it.z); fim.setMatrixAt(i, m.compose(v, q, sc));
-    fim.setColorAt(i, cc.setHSL(0.27 + rand() * 0.05, 0.25 + rand() * 0.2, 0.75 + rand() * 0.35));
+    fim.setColorAt(i, cc.setHSL(0.28 + rand() * 0.04, 0.42 + rand() * 0.15, 0.38 + rand() * 0.12)); // Vivid green
   });
+  fim.castShadow = true;
+  fim.receiveShadow = true;
   scene.add(fim);
-  inst(new THREE.CylinderGeometry(0.2, 0.3, 3, 5), trunk, leafy, 1.5, false);
-  inst(new THREE.IcosahedronGeometry(2.4, 0), leafMat, leafy, 4.3, false);
-  { const lim = scene.children[scene.children.length - 1], lc = new THREE.Color(); // feuillus (couleurs palette.js)
-    leafy.forEach((_, i) => lim.setColorAt(i, lc.setHex(PALETTE.leafy[Math.floor(rand() * PALETTE.leafy.length)]))); if (lim.instanceColor) lim.instanceColor.needsUpdate = true; }
+  
+  // Leafy trees with realistic canopies
+  const lim = new THREE.InstancedMesh(createLeafyTree(), leafyMat, leafy.length);
+  leafy.forEach((it, i) => {
+    q.setFromAxisAngle(up, it.r);
+    const k = it.s * (0.9 + rand() * 0.3);
+    sc.set(k, k * (0.85 + rand() * 0.3), k);
+    v.set(it.x, it.y - 0.2, it.z);
+    lim.setMatrixAt(i, m.compose(v, q, sc));
+  });
+  lim.castShadow = true;
+  lim.receiveShadow = true;
+  scene.add(lim);
+  
   return firs.length + leafy.length;
 }
 
@@ -309,7 +690,7 @@ export function addVillage(scene, track, terrain, n = 35) {
   const s = track.pts[0], list = [];
   for (let t = 0; t < 2000 && list.length < n; t++) {
     const a = rand() * 6.28, r = 20 + rand() * 230, x = s.x + Math.cos(a) * r, z = s.z + Math.sin(a) * r;
-    if (terrain.distTo(x, z) < 10 || terrain.slopeAt(x, z) > 0.5) continue;
+    if (terrain.distTo(x, z) < VEG_CLEARANCE || terrain.slopeAt(x, z) > 0.5) continue;
     if (list.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 220) || terrain.houses.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < 220)) continue;
     list.push({ x, z, y: terrain.heightAt(x, z) - 0.6, rot: rand() * 6.28, w: 8 + rand() * 5, d: 7 + rand() * 4, h: 4 + rand() * 3, v: rand() });
   }

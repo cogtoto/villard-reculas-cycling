@@ -1,15 +1,28 @@
 // Bords de route montagne : glissières W-beam côté ravin, murs de soutènement en pierre côté amont (instanciés).
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
+import { buildRoadIndex, distToRoad, ROAD_HALF_WIDTH } from './road-corridor.js';
 
 const ENABLE_RAILS = false; // glissières W-beam désactivées à la demande de Vincent
 
-export function addRoadside(scene, track, terrain, halfWidth = 2) {
+// Wall / rail placements (pure, no THREE objects) so audits can check them.
+// A wall segment is dropped when any part of it would stand on a paved leg
+// (tight hairpins, where the inside of one leg is the next leg).
+export function wallPlacements(track, terrain, halfWidth = 2, roadIndex = null) {
   const { pts, cum, length } = track, STEP = 4;
   const at = (d) => { let lo = 0, hi = cum.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
     const A = pts[lo], B = pts[hi], s = cum[hi] - cum[lo] || 1, t = (d - cum[lo]) / s;
     return { x: A.x + (B.x - A.x) * t, y: A.y + (B.y - A.y) * t, z: A.z + (B.z - A.z) * t, tx: (B.x - A.x) / s, tz: (B.z - A.z) / s }; };
+  const index = roadIndex || buildRoadIndex(pts, 2);
+  const clearOfRoad = (cx, cz, rot) => {
+    for (let t = -0.5; t <= 0.5; t += 0.125) for (const sx of [-0.25, 0.25]) {
+      const x = cx + Math.sin(rot) * t * (STEP + 0.1) + Math.cos(rot) * sx, z = cz + Math.cos(rot) * t * (STEP + 0.1) - Math.sin(rot) * sx;
+      if (distToRoad(index, x, z, 10) < ROAD_HALF_WIDTH + 0.6) return false;
+    }
+    return true;
+  };
   const rails = [], walls = [];
+  let skipped = 0;
   for (let d = 0; d < length - STEP; d += STEP) {
     const p = at(d);
     if (terrain.waterAt && terrain.waterAt(p.x, p.z)) continue;
@@ -17,10 +30,19 @@ export function addRoadside(scene, track, terrain, halfWidth = 2) {
       const nx = -p.tz * s, nz = p.tx * s, off = halfWidth + 1.1, x = p.x + nx * off, z = p.z + nz * off;
       const drop = p.y - terrain.heightAt(p.x + nx * 9, p.z + nz * 9);
       const rot = Math.atan2(p.tx, p.tz);
-      if (ENABLE_RAILS && drop > 2.5) rails.push({ x, z, y: p.y, rot });                   // ravin → glissière (désactivé)
-      else if (-drop > 4) walls.push({ x: p.x + nx * (halfWidth + 1.6), z: p.z + nz * (halfWidth + 1.6), y: p.y, rot, h: Math.min(3.2, -drop * 0.35) }); // talus → mur
+      if (ENABLE_RAILS && drop > 2.5) rails.push({ x, z, y: p.y, rot, d });                   // ravin → glissière (désactivé)
+      else if (-drop > 4) {                                                                   // talus → mur
+        const wx = p.x + nx * (halfWidth + 1.6), wz = p.z + nz * (halfWidth + 1.6);
+        if (!clearOfRoad(wx, wz, rot)) { skipped++; continue; }
+        walls.push({ x: wx, z: wz, y: p.y, rot, h: Math.min(3.2, -drop * 0.35), len: STEP + 0.1, d });
+      }
     }
   }
+  return { rails, walls, skipped, STEP };
+}
+
+export function addRoadside(scene, track, terrain, halfWidth = 2) {
+  const { rails, walls, skipped, STEP } = wallPlacements(track, terrain, halfWidth, terrain.roadIndex);
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), P = new THREE.Vector3(), S = new THREE.Vector3();
   const steel = new THREE.MeshStandardMaterial({ color: PALETTE.road.rail, metalness: 0.7, roughness: 0.35 });
   // lisse W-beam (profil 2 ondes) + poteau, un segment par pas de 4 m
@@ -43,5 +65,5 @@ export function addRoadside(scene, track, terrain, halfWidth = 2) {
     walls.forEach((w, i) => im.setMatrixAt(i, m.compose(P.set(w.x, w.y - 0.3, w.z), q.setFromAxisAngle(up, w.rot), S.set(1, w.h + 0.3, 1))));
     im.castShadow = true; im.receiveShadow = true; scene.add(im);
   }
-  return { rails: rails.length, walls: walls.length };
+  return { rails: rails.length, walls: walls.length, wallsSkippedOnRoad: skipped };
 }

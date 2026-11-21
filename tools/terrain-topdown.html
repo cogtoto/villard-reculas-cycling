@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terrain Top-Down View - Debug Tool</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #000; font-family: monospace; color: #fff; }
+    #canvas { display: block; width: 100vw; height: 100vh; }
+    #info { position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.8); padding: 10px; max-width: 400px; font-size: 12px; }
+    #info pre { margin: 5px 0; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="info">
+    <div>Loading terrain and GPX data...</div>
+    <pre id="log"></pre>
+  </div>
+  
+  <script type="module">
+    import * as THREE from 'three';
+    
+    const canvas = document.getElementById('canvas');
+    const info = document.getElementById('info');
+    const log = document.getElementById('log');
+    
+    function addLog(text) {
+      console.log(text);
+      log.textContent += text + '\n';
+    }
+    
+    // Scene setup
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87CEEB); // Sky blue
+    
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    
+    // Load GPX and parse
+    async function loadGPX() {
+      const response = await fetch('/villard-reculas.gpx');
+      const text = await response.text();
+      
+      const pts = [];
+      const re = /<trkpt\s+([^>]*)>([\s\S]*?)<\/trkpt>/g;
+      let m;
+      while ((m = re.exec(text))) {
+        const lat = parseFloat(/lat="([^"]+)"/.exec(m[1])?.[1]);
+        const lon = parseFloat(/lon="([^"]+)"/.exec(m[1])?.[1]);
+        const e = /<ele>([^<]+)<\/ele>/.exec(m[2]);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          pts.push({ lat, lon, ele: e ? parseFloat(e[1]) : 0 });
+        }
+      }
+      
+      // Convert to local coordinates (same as GPX loader)
+      const lat0 = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+      const lon0 = pts.reduce((s, p) => s + p.lon, 0) / pts.length;
+      const R = 6371000;
+      const k = Math.cos((lat0 * Math.PI) / 180);
+      
+      const local = pts.map(p => ({
+        x: ((p.lon - lon0) * Math.PI / 180) * R * k,
+        y: p.ele,
+        z: -((p.lat - lat0) * Math.PI / 180) * R
+      }));
+      
+      addLog(`GPX: ${pts.length} points, origin (${lat0.toFixed(6)}, ${lon0.toFixed(6)})`);
+      addLog(`First point: x=${local[0].x.toFixed(0)}, y=${local[0].y.toFixed(0)}, z=${local[0].z.toFixed(0)}`);
+      
+      return { local, origin: { lat0, lon0 } };
+    }
+    
+    // Load terrain chunks
+    async function loadTerrain(gpxOrigin) {
+      const response = await fetch('/terrain/villard/metadata.json');
+      const metadata = await response.json();
+      
+      addLog(`Terrain bbox: ${metadata.bbox.minLat.toFixed(4)}-${metadata.bbox.maxLat.toFixed(4)}, ${metadata.bbox.minLon.toFixed(4)}-${metadata.bbox.maxLon.toFixed(4)}`);
+      
+      const R = 6371000;
+      const k = Math.cos((gpxOrigin.lat0 * Math.PI) / 180);
+      
+      // Load all chunks
+      const chunks = [];
+      for (const ortho of metadata.orthoimagery) {
+        // Load heightmap
+        const heightResp = await fetch(`/terrain/villard/heightmap-${ortho.bbox.name}.bin`);
+        const heightBuf = await heightResp.arrayBuffer();
+        const heightData = new Int16Array(heightBuf);
+        
+        // Load texture
+        const texture = await new Promise((resolve, reject) => {
+          new THREE.TextureLoader().load(
+            `/terrain/villard/${ortho.file}`,
+            (tex) => {
+              tex.colorSpace = THREE.SRGBColorSpace;
+              tex.wrapS = THREE.ClampToEdgeWrapping;
+              tex.wrapT = THREE.ClampToEdgeWrapping;
+              resolve(tex);
+            },
+            undefined,
+            reject
+          );
+        });
+        
+        // Calculate chunk center in local coords
+        const centerLat = (ortho.bbox.minLat + ortho.bbox.maxLat) / 2;
+        const centerLon = (ortho.bbox.minLon + ortho.bbox.maxLon) / 2;
+        const centerX = ((centerLon - gpxOrigin.lon0) * Math.PI / 180) * R * k;
+        const centerZ = -((centerLat - gpxOrigin.lat0) * Math.PI / 180) * R;
+        
+        // Calculate chunk size
+        const latSpan = ortho.bbox.maxLat - ortho.bbox.minLat;
+        const lonSpan = ortho.bbox.maxLon - ortho.bbox.minLon;
+        const sizeX = lonSpan * Math.PI / 180 * R * k;
+        const sizeZ = latSpan * Math.PI / 180 * R;
+        
+        addLog(`Chunk ${ortho.bbox.name}: center (${centerX.toFixed(0)}, ${centerZ.toFixed(0)}), size ${sizeX.toFixed(0)}×${sizeZ.toFixed(0)}`);
+        
+        // Create mesh
+        const nx = metadata.chunks.chunkSizeX;
+        const ny = metadata.chunks.chunkSizeY;
+        const geometry = new THREE.PlaneGeometry(1, 1, nx - 1, ny - 1);
+        const positions = geometry.attributes.position.array;
+        
+        // Apply elevations and scale
+        for (let y = 0; y < ny; y++) {
+          for (let x = 0; x < nx; x++) {
+            const idx = y * nx + x;
+            const elevation = heightData[idx];
+            const posIdx = idx * 3;
+            positions[posIdx] = (x / (nx - 1) - 0.5) * sizeX;
+            positions[posIdx + 1] = elevation;
+            positions[posIdx + 2] = (y / (ny - 1) - 0.5) * sizeZ;
+          }
+        }
+        
+        geometry.computeVertexNormals();
+        
+        const material = new THREE.MeshBasicMaterial({ map: texture });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(centerX, 0, centerZ);
+        scene.add(mesh);
+        
+        chunks.push({ name: ortho.bbox.name, mesh, centerX, centerZ });
+      }
+      
+      return chunks;
+    }
+    
+    // Draw GPX track as red line
+    function drawGPXTrack(gpxLocal) {
+      const points = gpxLocal.map(p => new THREE.Vector3(p.x, p.y + 10, p.z));
+      const geometry = new THREE.BufferGeometry().setFromPoints(points);
+      const material = new THREE.LineBasicMaterial({ color: 0xff0000, linewidth: 2 });
+      const line = new THREE.Line(geometry, material);
+      scene.add(line);
+      addLog(`GPX track drawn: ${points.length} points`);
+    }
+    
+    // Main
+    async function main() {
+      try {
+        const { local: gpxLocal, origin } = await loadGPX();
+        const chunks = await loadTerrain(origin);
+        drawGPXTrack(gpxLocal);
+        
+        // Calculate overall bounds
+        const minX = Math.min(...chunks.map(c => c.centerX)) - 3000;
+        const maxX = Math.max(...chunks.map(c => c.centerX)) + 3000;
+        const minZ = Math.min(...chunks.map(c => c.centerZ)) - 3000;
+        const maxZ = Math.max(...chunks.map(c => c.centerZ)) + 3000;
+        const centerX = (minX + maxX) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+        const spanX = maxX - minX;
+        const spanZ = maxZ - minZ;
+        
+        addLog(`\nBounds: X ${minX.toFixed(0)} to ${maxX.toFixed(0)}, Z ${minZ.toFixed(0)} to ${maxZ.toFixed(0)}`);
+        addLog(`Center: (${centerX.toFixed(0)}, ${centerZ.toFixed(0)})`);
+        
+        // Create TRUE top-down orthographic camera
+        const aspect = window.innerWidth / window.innerHeight;
+        const size = Math.max(spanX, spanZ) / 2;
+        const camera = new THREE.OrthographicCamera(
+          -size * aspect, size * aspect,
+          size, -size,
+          1, 20000
+        );
+        
+        // Position DIRECTLY above, looking DOWN
+        camera.position.set(centerX, 10000, centerZ);
+        camera.up.set(0, 0, -1); // Up = North (-Z)
+        camera.lookAt(centerX, 0, centerZ);
+        camera.updateProjectionMatrix();
+        
+        addLog(`\nCamera: position (${centerX.toFixed(0)}, 10000, ${centerZ.toFixed(0)})`);
+        addLog(`Looking at: (${centerX.toFixed(0)}, 0, ${centerZ.toFixed(0)})`);
+        addLog('\nReady. NO game loop - static view.');
+        
+        // Single render (no animation loop)
+        renderer.render(scene, camera);
+        
+        info.innerHTML = '<div style="color:#0f0">✓ Terrain loaded. Check alignment: red GPX line should follow visible roads in photo.</div>' + info.innerHTML;
+        
+      } catch (err) {
+        addLog(`\nERROR: ${err.message}`);
+        console.error(err);
+      }
+    }
+    
+    main();
+  </script>
+</body>
+</html>

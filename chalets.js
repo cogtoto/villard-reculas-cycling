@@ -1,204 +1,503 @@
-// Chalets alpins en bois (madriers) — 3 variantes, géométries fusionnées + InstancedMesh (1 draw call par matériau et variante).
+// Alpine chalets — stone base, wood upper, balcony, overhanging roof, chimney.
+// Instanced, merged, low-poly: light enough for an i3-5020U.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { makeRoofGeometry } from './decor.js';
-import { PALETTE } from './palette.js';
+import { VEG_CLEARANCE } from './road-corridor.js';
 
 let seed = 4242;
 const rand = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 
-// ---------- textures procédurales ----------
-function canvasTex(size, draw, rep = 1) {
-  const cv = document.createElement('canvas'); cv.width = cv.height = size;
+export const HERO_EXCLUSION_M = 45;
+export const VILLAGE_MIN_SEP = 13;
+export const HAMLET_MIN_SEP = 18;
+
+// Simple procedural textures
+function canvasTex(size, draw) {
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = size;
   draw(cv.getContext('2d'), size);
-  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.RepeatWrapping; t.anisotropy = 4;
-  t.repeat.set(rep, rep); return t;
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  t.repeat.set(2, 2);
+  return t;
 }
-// madriers : 8 rondins de ~30 cm pour 2,4 m, ombrés en arrondi, veinage, joints sombres
-const logTex = () => canvasTex(256, (g, S) => {
-  const n = 8, h = S / n;
-  for (let r = 0; r < n; r++) {
-    const y = r * h, base = 150 + rand() * 30;
-    const grd = g.createLinearGradient(0, y, 0, y + h);
-    const L = (k) => `rgb(${base * k * 1.45},${base * k * 1.4},${base * k * 1.32})`; // texture neutre, couleur via teinte d'instance
-    grd.addColorStop(0, L(0.55)); grd.addColorStop(0.35, L(1)); grd.addColorStop(0.8, L(0.82)); grd.addColorStop(1, L(0.38));
-    g.fillStyle = grd; g.fillRect(0, y, S, h);
-    for (let k = 0; k < 14; k++) { // veinage
-      g.strokeStyle = `rgba(60,35,18,${0.08 + rand() * 0.14})`; g.lineWidth = 0.6 + rand();
-      const yy = y + 3 + rand() * (h - 6); g.beginPath(); g.moveTo(0, yy);
-      for (let x = 0; x <= S; x += 16) g.lineTo(x, yy + Math.sin(x * 0.05 + k) * 1.2);
-      g.stroke();
+
+const woodTex = () => canvasTex(256, (g, S) => {
+  g.fillStyle = '#a87d52';
+  g.fillRect(0, 0, S, S);
+  for (let y = 0; y < S; y += 18) {
+    const shade = 150 + rand() * 50;
+    const r = shade * 1.1, gv = shade * 0.88, b = shade * 0.65;
+    g.fillStyle = `rgb(${r}, ${gv}, ${b})`;
+    g.fillRect(0, y, S, 16);
+    for (let x = 0; x < S; x += 8 + rand() * 16) {
+      g.fillStyle = `rgba(80, 50, 30, ${0.15 + rand() * 0.1})`;
+      g.fillRect(x, y + 2, 2 + rand() * 3, 12);
     }
-    for (let k = 0; k < 2; k++) { g.fillStyle = 'rgba(70,40,20,.45)'; g.beginPath(); g.ellipse(rand() * S, y + h / 2, 3 + rand() * 3, 2, 0, 0, 7); g.fill(); } // nœuds
-    g.fillStyle = 'rgba(25,14,6,.85)'; g.fillRect(0, y + h - 1.5, S, 1.5);
+    g.fillStyle = 'rgba(40, 25, 15, 0.5)';
+    g.fillRect(0, y + 16, S, 2);
   }
 });
-const plankTex = () => canvasTex(128, (g, S) => { // planches verticales (balcon, pignon)
-  for (let i = 0; i < 8; i++) { const b = 175 + rand() * 50; g.fillStyle = `rgb(${b},${b * 0.96},${b * 0.9})`; g.fillRect(i * 16, 0, 16, S);
-    g.fillStyle = 'rgba(30,16,8,.7)'; g.fillRect(i * 16 + 15, 0, 1, S); }
-});
+
 const stoneTex = () => canvasTex(256, (g, S) => {
-  g.fillStyle = '#8b877e'; g.fillRect(0, 0, S, S);
-  for (let k = 0; k < 140; k++) {
-    const x = rand() * S, y = rand() * S, w = 14 + rand() * 26, h = 9 + rand() * 14, v = 120 + rand() * 70;
-    g.fillStyle = `rgb(${v},${v * 0.97},${v * 0.9})`; g.strokeStyle = 'rgba(50,48,44,.8)'; g.lineWidth = 2;
-    g.beginPath(); g.roundRect(x, y, w, h, 4); g.fill(); g.stroke();
-  }
-});
-const roofTex = () => canvasTex(256, (g, S) => { // bardeaux / lauzes en rangées décalées
-  g.fillStyle = '#6a6a6c'; g.fillRect(0, 0, S, S);
-  const rh = 16;
-  for (let r = 0; r < S / rh; r++) for (let x = -((r % 2) * 10); x < S; x += 20) {
-    const v = 150 + rand() * 60; g.fillStyle = `rgb(${v},${v},${v * 1.02})`; g.fillRect(x + 1, r * rh, 18, rh - 2);
-    g.fillStyle = 'rgba(0,0,0,.35)'; g.fillRect(x + 1, r * rh + rh - 4, 18, 2);
+  g.fillStyle = '#d8cfc5';
+  g.fillRect(0, 0, S, S);
+  for (let k = 0; k < 90; k++) {
+    const x = rand() * S, y = rand() * S;
+    const w = 15 + rand() * 30, h = 10 + rand() * 16;
+    const v = 170 + rand() * 50;
+    g.fillStyle = `rgb(${v}, ${v * 0.96}, ${v * 0.92})`;
+    g.fillRect(x, y, w, h);
+    g.strokeStyle = 'rgba(90, 85, 75, 0.4)';
+    g.lineWidth = 2;
+    g.strokeRect(x, y, w, h);
   }
 });
 
-// UV planaires en mètres (projection selon l'axe dominant de la normale), tuilage = 2,4 m
-function planarUV(geo, scale = 1 / 2.4) {
-  geo = geo.index ? geo.toNonIndexed() : geo; geo.computeVertexNormals();
-  const p = geo.attributes.position, n = geo.attributes.normal, uv = new Float32Array(p.count * 2);
-  for (let i = 0; i < p.count; i++) {
-    const ax = Math.abs(n.getX(i)), ay = Math.abs(n.getY(i)), az = Math.abs(n.getZ(i));
-    let u, v;
-    if (ay > ax && ay > az) { u = p.getX(i); v = p.getZ(i); } else if (ax > az) { u = p.getZ(i); v = p.getY(i); } else { u = p.getX(i); v = p.getY(i); }
-    uv[i * 2] = u * scale; uv[i * 2 + 1] = v * scale;
+const roofTex = () => canvasTex(256, (g, S) => {
+  g.fillStyle = '#2f3034';
+  g.fillRect(0, 0, S, S);
+  const rowH = 14;
+  for (let r = 0; r < S / rowH; r++) {
+    const offset = (r % 2) * 12;
+    for (let x = -offset; x < S; x += 24) {
+      const v = 42 + rand() * 28;
+      g.fillStyle = `rgb(${v}, ${v}, ${v + 6})`;
+      g.fillRect(x + 1, r * rowH, 22, rowH - 1);
+      g.fillStyle = 'rgba(0, 0, 0, 0.2)';
+      g.fillRect(x, r * rowH + rowH - 1, 24, 1);
+    }
   }
-  geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-  return geo;
-}
-const box = (w, h, d, x, y, z, rx = 0, col) => {
-  const g = new THREE.BoxGeometry(w, h, d); if (rx) g.rotateX(rx); g.translate(x, y, z);
-  const o = planarUV(g);
-  if (col !== undefined) { const c = new THREE.Color(col), a = new Float32Array(o.attributes.position.count * 3); for (let i = 0; i < a.length; i += 3) { a[i] = c.r; a[i + 1] = c.g; a[i + 2] = c.b; } o.setAttribute('color', new THREE.BufferAttribute(a, 3)); }
-  return o;
-};
+});
 
-// ---------- géométrie d'une variante (pignon + balcon côté +X = face à la route) ----------
-function chaletParts(o) {
-  const { W, D, floors, balcony, terrace, chimney } = o; // W le long de X (faîtage), D en Z
-  const hb = 1.1, hw = 2.7 * floors, pitch = THREE.MathUtils.degToRad(o.pitch), rh = (D / 2) * Math.tan(pitch), top = hb + hw + rh;
-  const P = { stone: [], render: [], wood: [], plank: [], roof: [], trim: [], solar: [] };
-  P.stone.push(box(W + 0.3, hb + 2, D + 0.3, 0, (hb - 2) / 2, 0));            // soubassement pierre (enterré de 2 m)
-  if (o.renderGround && floors > 1) { // RDC crépi beige, étages en madriers
-    P.render.push(box(W + 0.06, 2.7, D + 0.06, 0, hb + 1.35, 0));
-    P.wood.push(box(W, hw - 2.7, D, 0, hb + 2.7 + (hw - 2.7) / 2, 0));
-  } else P.wood.push(box(W, hw, D, 0, hb + hw / 2, 0));                        // madriers
-  const gable = makeRoofGeometry(); gable.scale(W, rh, D); gable.translate(0, hb + hw, 0); P.plank.push(planarUV(gable)); // pignons en planches
-  // toit 2 pans débordant (rives + avant-toit côté balcon)
-  const ovZ = 1.0, ovX = 1.1, L = (D / 2 + ovZ) / Math.cos(pitch), th = 0.22;
-  for (const sgn of [1, -1]) {
-    const g = new THREE.BoxGeometry(W + ovX * 2, th, L); g.rotateX(sgn * pitch);
-    g.translate(0.2, top - Math.sin(pitch) * L / 2 + Math.cos(pitch) * th / 2 + 0.05, sgn * Math.cos(pitch) * L / 2);
-    P.roof.push(planarUV(g, 1 / 3));
-    if (sgn === 1) { // panneaux solaires sombres sur le pan avant (instanciés seulement sur certains chalets)
-      const sp = new THREE.BoxGeometry(W * 0.5, 0.05, L * 0.5); sp.rotateX(pitch);
-      sp.translate(-W * 0.1, top - Math.sin(pitch) * L * 0.45 + Math.cos(pitch) * (th + 0.06), Math.cos(pitch) * L * 0.45); P.solar.push(planarUV(sp));
-    }
-    // planche de rive sous le pan (bois sombre)
-    P.plank.push(box(0.12, 0.35, L, W / 2 + ovX + 0.2, 0, 0, 0)); P.plank[P.plank.length - 1].rotateX(sgn * pitch).translate(0, top - Math.sin(pitch) * L / 2 - 0.1, sgn * Math.cos(pitch) * L / 2);
-  }
-  P.plank.push(box(W + ovX * 2 + 0.2, 0.25, 0.25, 0.2, top + 0.12, 0));       // faîtage
-  // pannes apparentes sous l'avant-toit, côté pignon
-  for (const z of [-D / 4, 0, D / 4]) P.plank.push(box(ovX + 0.4, 0.2, 0.2, W / 2 + ovX / 2, top - Math.abs(z) * Math.tan(pitch) - 0.25, z));
-  // fenêtres + volets (vertex colors)
-  const glass = 0x1f2a33, frame = 0xe8dcc4, shut = o.shutter;
-  const win = (x, y, z, face) => { // face: 'x' (pignon +X) ou 'z+' / 'z-'
-    if (face === 'x') {
-      P.trim.push(box(0.12, 1.25, 1.0, x, y, z, 0, frame), box(0.14, 1.05, 0.8, x + 0.02, y, z, 0, glass));
-      P.trim.push(box(0.08, 1.25, 0.5, x + 0.04, y, z - 0.78, 0, shut), box(0.08, 1.25, 0.5, x + 0.04, y, z + 0.78, 0, shut));
-    } else { const s = face === 'z+' ? 1 : -1;
-      P.trim.push(box(1.0, 1.25, 0.12, x, y, z, 0, frame), box(0.8, 1.05, 0.14, x, y, z + 0.02 * s, 0, glass));
-      P.trim.push(box(0.5, 1.25, 0.08, x - 0.78, y, z + 0.04 * s, 0, shut), box(0.5, 1.25, 0.08, x + 0.78, y, z + 0.04 * s, 0, shut));
-    }
-  };
-  for (let f = 0; f < floors; f++) {
-    const y = hb + 1.45 + f * 2.7;
-    for (const z of D > 8.5 ? [-D / 3.2, 0, D / 3.2] : [-D / 4, D / 4]) win(W / 2 + 0.02, y, z, 'x');
-    for (const x of W > 9 ? [-W / 3, 0, W / 3] : [-W / 4, W / 4]) { if (!(f === 0 && o.garage && x <= 0)) win(x, y, D / 2 + 0.02, 'z+'); win(x, y, -D / 2 - 0.02, 'z-'); }
-  }
-  P.trim.push(box(0.12, 2.1, 1.1, W / 2 + 0.02, hb + 1.05, 0, 0, 0x5a3a22)); // porte
-  if (o.garage) for (let k = 0; k < 9; k++) // porte de garage en planches verticales orange-brun
-    P.trim.push(box(0.3, 2.3, 0.12, -W / 4 - 1.2 + k * 0.3 + 0.15, hb + 1.15 - 0.6, D / 2 + 0.05, 0, k % 2 ? PALETTE.chalet.garage : 0xa65a27));
-  win(W / 2 + 0.02, hb + hw + rh * 0.4, 0, 'x');                             // fenêtre de pignon
-  // balcon à barreaux sur le pignon
-  const railing = (y0, depth, span, withPosts) => {
-    const xo = W / 2 + depth;
-    P.plank.push(box(depth + 0.1, 0.2, span, W / 2 + depth / 2, y0, 0));      // plancher
-    P.plank.push(box(0.12, 0.12, span, xo, y0 + 1.0, 0), box(0.1, 0.1, span, xo, y0 + 0.2, 0)); // lisses
-    for (const s of [-1, 1]) P.plank.push(box(depth, 0.12, 0.12, W / 2 + depth / 2, y0 + 1.0, s * span / 2));
-    for (let z = -span / 2; z <= span / 2 + 0.01; z += 0.22) P.plank.push(box(0.06, 0.8, 0.14, xo, y0 + 0.6, z)); // barreaux
-    for (const s of [-1, 1]) for (let x = W / 2 + 0.3; x < xo; x += 0.22) P.plank.push(box(0.14, 0.8, 0.06, x, y0 + 0.6, s * span / 2));
-    if (withPosts) for (const s of [-1, 1]) P.plank.push(box(0.22, y0 + 2, 0.22, xo - 0.1, (y0 - 2) / 2, s * (span / 2 - 0.1)));
-    for (const s of [-1, 1]) P.plank.push(box(depth, 0.18, 0.18, W / 2 + depth / 2, y0 - 0.15, s * span * 0.3)); // consoles
-  };
-  if (balcony) for (let f = 1; f < floors + (o.atticBalcony ? 1 : 0); f++) railing(hb + f * 2.7, 1.5, D + 0.2, true); // balcon pleine largeur
-  if (terrace) railing(hb, 2.6, D + 0.3, true);
-  if (chimney) { const cx = -W * 0.25, cz = -D * 0.22, cy = top - Math.abs(cz) * Math.tan(pitch);
-    P.stone.push(box(0.75, 2.4, 0.75, cx, cy + 0.4, cz)); P.roof.push(box(1.0, 0.12, 1.0, cx, cy + 1.65, cz)); }
-  const out = {}; for (const k in P) out[k] = P[k].length ? mergeGeometries(P[k].map((g) => { if (k !== 'trim') g.deleteAttribute('color'); return g; })) : null;
-  return out;
+function box(w, h, d, x, y, z) {
+  const g = new THREE.BoxGeometry(w, h, d);
+  g.translate(x, y, z);
+  return g;
 }
-const VARIANTS = [
-  { W: 8, D: 7, floors: 1, pitch: 24, balcony: false, terrace: true, chimney: true, shutter: PALETTE.chalet.shutters[0] },   // mazot / petit chalet
-  { W: 10, D: 8.5, floors: 2, pitch: 22, balcony: true, terrace: false, chimney: true, atticBalcony: true, renderGround: true, shutter: PALETTE.chalet.shutters[1] }, // chalet classique
-  { W: 13, D: 10, floors: 2, pitch: 20, balcony: true, terrace: true, chimney: true, renderGround: true, garage: true, shutter: PALETTE.chalet.shutters[2] },   // grand chalet / ferme
+
+function gableWall(width, height, thick) {
+  const shape = new THREE.Shape();
+  shape.moveTo(-width / 2, 0);
+  shape.lineTo(width / 2, 0);
+  shape.lineTo(0, height);
+  shape.closePath();
+  return new THREE.ExtrudeGeometry(shape, { depth: thick, bevelEnabled: false, steps: 1 });
+}
+
+function windowSet(parts, x, y, z, { w = 0.75, h = 1.05, shutters = true, side = false } = {}) {
+  if (side) {
+    parts.wood.push(box(0.05, h + 0.14, w + 0.14, x, y, z));
+    parts.windows.push(box(0.05, h, w, x + Math.sign(x) * 0.03, y, z));
+    if (shutters) {
+      parts.wood.push(box(0.07, h, 0.32, x + Math.sign(x) * 0.04, y, z - w / 2 - 0.22));
+      parts.wood.push(box(0.07, h, 0.32, x + Math.sign(x) * 0.04, y, z + w / 2 + 0.22));
+    }
+  } else {
+    parts.wood.push(box(w + 0.14, h + 0.14, 0.05, x, y, z));
+    parts.windows.push(box(w, h, 0.05, x, y, z + 0.03));
+    if (shutters) {
+      parts.wood.push(box(0.32, h, 0.07, x - w / 2 - 0.22, y, z + 0.02));
+      parts.wood.push(box(0.32, h, 0.07, x + w / 2 + 0.22, y, z + 0.02));
+    }
+  }
+}
+
+export function createChaletGeometry(variant) {
+  const { W, D, baseH, upperH, roofPitch, chimney = 'right', shutters = true } = variant;
+  const parts = { stone: [], wood: [], roof: [], windows: [] };
+  const plinth = 0.35;
+
+  // Stone plinth + ground floor + corner quoins
+  parts.stone.push(box(W + 0.45, plinth, D + 0.45, 0, plinth / 2, 0));
+  parts.stone.push(box(W, baseH, D, 0, plinth + baseH / 2, 0));
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    parts.stone.push(box(0.32, baseH, 0.32, sx * (W / 2 - 0.04), plinth + baseH / 2, sz * (D / 2 - 0.04)));
+  }
+
+  // Door on the front (+Z)
+  parts.wood.push(box(1.05, 2.05, 0.1, 0, plinth + 1.05, D / 2 + 0.04));
+
+  // Wooden upper storey, slightly inset
+  parts.wood.push(box(W - 0.15, upperH, D - 0.15, 0, plinth + baseH + upperH / 2, 0));
+
+  const roofH = (D / 2) * Math.tan(roofPitch);
+  // Wooden gable ends stay just under the roof underside so they do not poke the ridge
+  for (const side of [-1, 1]) {
+    const g = gableWall(W - 0.2, Math.max(0.4, roofH - 0.12), 0.14);
+    if (side < 0) g.rotateY(Math.PI);
+    const z0 = side > 0 ? (D / 2 - 0.14) : -D / 2;
+    g.translate(0, plinth + baseH + upperH, z0);
+    parts.wood.push(g);
+  }
+
+  // Front balcony: deck, posts, rails, a few decorative X panels
+  const balD = 1.55;
+  const balY = plinth + baseH + 0.08;
+  parts.wood.push(box(W - 0.15, 0.14, balD, 0, balY, D / 2 + balD / 2 - 0.04));
+  const railZ = D / 2 + balD - 0.12;
+  const postH = 1.0;
+  const xs = [];
+  for (let x = -W / 2 + 0.3; x <= W / 2 - 0.3 + 0.01; x += 0.8) xs.push(x);
+  for (const x of xs) {
+    parts.wood.push(box(0.08, postH, 0.08, x, balY + 0.07 + postH / 2, railZ));
+  }
+  parts.wood.push(box(W - 0.45, 0.07, 0.07, 0, balY + postH + 0.04, railZ));
+  parts.wood.push(box(W - 0.45, 0.06, 0.06, 0, balY + postH * 0.5, railZ));
+  for (let i = 0; i < xs.length - 1; i += 2) {
+    const x0 = xs[i], x1 = xs[i + 1];
+    const mid = (x0 + x1) / 2, span = x1 - x0;
+    const g1 = new THREE.BoxGeometry(span * 1.05, 0.05, 0.05);
+    g1.rotateZ(Math.atan2(postH * 0.72, span));
+    g1.translate(mid, balY + 0.18 + postH * 0.42, railZ);
+    parts.wood.push(g1);
+    const g2 = new THREE.BoxGeometry(span * 1.05, 0.05, 0.05);
+    g2.rotateZ(-Math.atan2(postH * 0.72, span));
+    g2.translate(mid, balY + 0.18 + postH * 0.42, railZ);
+    parts.wood.push(g2);
+  }
+  for (const side of [-1, 1]) {
+    parts.wood.push(box(0.07, postH, balD - 0.25, side * (W / 2 - 0.22), balY + 0.07 + postH / 2, D / 2 + balD / 2));
+  }
+
+  // Overhanging slate roof
+  const overhang = 1.65;
+  const roofTop = plinth + baseH + upperH + roofH;
+  const roofW = W + overhang * 2;
+  const roofL = (D / 2 + overhang) / Math.cos(roofPitch);
+  const thick = 0.18;
+  for (const side of [-1, 1]) {
+    const g = new THREE.BoxGeometry(roofW, thick, roofL);
+    g.rotateX(side * roofPitch);
+    g.translate(0, roofTop - Math.sin(roofPitch) * roofL / 2, side * Math.cos(roofPitch) * roofL / 2);
+    parts.roof.push(g);
+  }
+  // Ridge cap hides the hairline gap where the two slopes meet
+  parts.roof.push(box(roofW + 0.04, 0.14, 0.32, 0, roofTop + 0.02, 0));
+
+  // Stone chimney poking through one slope
+  const chSign = chimney === 'left' ? -1 : 1;
+  const chX = chSign * (W * 0.28);
+  const chZ = D * 0.2;
+  const roofYAt = plinth + baseH + upperH + Math.max(0.15, (D / 2 - Math.abs(chZ))) * Math.tan(roofPitch);
+  parts.stone.push(box(0.62, 1.85, 0.48, chX, roofYAt + 0.55, chZ));
+  parts.stone.push(box(0.82, 0.14, 0.68, chX, roofYAt + 1.52, chZ));
+
+  // Ground-floor windows
+  const gY = plinth + baseH * 0.55;
+  windowSet(parts, -W * 0.28, gY, D / 2 + 0.05, { w: 0.7, h: 0.95, shutters });
+  windowSet(parts, W * 0.28, gY, D / 2 + 0.05, { w: 0.7, h: 0.95, shutters });
+
+  // Upper-floor windows (balcony façade + sides)
+  const uY = plinth + baseH + upperH * 0.52;
+  const nWin = W >= 10 ? 3 : 2;
+  if (nWin === 3) {
+    for (const x of [-W * 0.32, 0, W * 0.32]) windowSet(parts, x, uY, D / 2 + 0.05, { shutters });
+  } else {
+    for (const x of [-W * 0.22, W * 0.22]) windowSet(parts, x, uY, D / 2 + 0.05, { shutters });
+  }
+  for (const side of [-1, 1]) {
+    windowSet(parts, side * (W / 2 + 0.05), uY, 0, { w: 0.7, h: 1.0, shutters, side: true });
+  }
+
+  const merged = {};
+  for (const key in parts) {
+    if (!parts[key].length) continue;
+    const prepped = parts[key].map((g) => {
+      const n = g.index ? g.toNonIndexed() : g.clone();
+      if (!n.getAttribute('normal')) n.computeVertexNormals();
+      if (!n.getAttribute('uv')) {
+        n.setAttribute('uv', new THREE.Float32BufferAttribute(n.getAttribute('position').count * 2, 2));
+      }
+      return n;
+    });
+    merged[key] = mergeGeometries(prepped, false);
+  }
+  return merged;
+}
+
+export const VARIANTS = [
+  { W: 7, D: 6, baseH: 2.3, upperH: 2.3, roofPitch: Math.PI / 7, chimney: 'left', shutters: true },
+  { W: 8.4, D: 7, baseH: 2.5, upperH: 2.7, roofPitch: Math.PI / 8, chimney: 'right', shutters: true },
+  { W: 9.6, D: 7.6, baseH: 2.6, upperH: 2.9, roofPitch: Math.PI / 8, chimney: 'left', shutters: true },
+  { W: 11, D: 8.4, baseH: 2.9, upperH: 3.1, roofPitch: Math.PI / 9, chimney: 'right', shutters: true },
+  { W: 9, D: 8.8, baseH: 2.4, upperH: 2.2, roofPitch: Math.PI / 7, chimney: 'left', shutters: true }
 ];
 
-// ---------- placement : village de départ + hameaux le long de la route ----------
-export function addChalets(scene, track, terrain, { village = 34, hamlets = 70 } = {}) {
-  const { pts, cum, length } = track, list = [];
-  const ok = (x, z, r2 = 260) => terrain.distTo(x, z) > 11 && terrain.slopeAt(x, z) < 0.55 && !(terrain.waterAt && terrain.waterAt(x, z))
-    && terrain.classify(x, z) !== 'rock' && terrain.classify(x, z) !== 'snow' && !list.some((h) => (h.x - x) ** 2 + (h.z - z) ** 2 < r2);
-  const push = (x, z) => {
-    const near = nearestRoad(x, z), fx = near.x - x, fz = near.z - z, L = Math.hypot(fx, fz) || 1;
-    const v = rand() < 0.3 ? 0 : rand() < 0.7 ? 1 : 2, V = VARIANTS[v];
-    const rot = Math.atan2(-fz / L, fx / L) + (rand() - 0.5) * 0.4;   // pignon/balcon (+X) tourné vers la route
-    let y = Infinity; const c = Math.cos(rot), s = Math.sin(rot);
-    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]]) { const lx = a * V.W / 2, lz = b * V.D / 2; y = Math.min(y, terrain.heightAt(x + lx * c + lz * s, z - lx * s + lz * c)); }
-    list.push({ x, z, y: y - 0.15, rot, v, wood: rand(), roof: rand(), solar: rand() < 0.3 });
+export function footprintHalf(W, D) {
+  return { hw: W / 2 + 1.7, hd: D / 2 + 1.8 }; // roof overhang + balcony
+}
+
+// Same XZ transform as mesh rotation.y: local (lx, lz) → world
+export function footprintWorld(x, z, rot, lx, lz) {
+  const c = Math.cos(rot), s = Math.sin(rot);
+  return { x: x + lx * c + lz * s, z: z - lx * s + lz * c };
+}
+
+export function footprintMinDist(x, z, rot, W, D, distFn) {
+  const { hw, hd } = footprintHalf(W, D);
+  let min = distFn(x, z);
+  const pts = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd], [0, hd], [0, -hd], [hw, 0], [-hw, 0]];
+  for (const [a, b] of pts) {
+    const p = footprintWorld(x, z, rot, a, b);
+    const d = distFn(p.x, p.z);
+    if (d < min) min = d;
+  }
+  return min;
+}
+
+export function footprintsOverlap(ax, az, aRot, aW, aD, bx, bz, bRot, bW, bD, pad = 1.0) {
+  const aH = footprintHalf(aW, aD);
+  const bH = footprintHalf(bW, bD);
+  const corners = (x, z, rot, hw, hd) => {
+    const out = [];
+    for (const [lx, lz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {
+      const p = footprintWorld(x, z, rot, lx, lz);
+      out.push([p.x, p.z]);
+    }
+    return out;
   };
-  const nearestRoad = (x, z) => { let b = Infinity, p0 = pts[0]; for (let i = 0; i < pts.length; i += 1) { const p = pts[i], d = (p.x - x) ** 2 + (p.z - z) ** 2; if (d < b) { b = d; p0 = p; } } return p0; };
-  const s0 = pts[0];
-  for (let t = 0; t < 3000 && list.length < village; t++) { const a = rand() * 6.28, r = 18 + rand() * 240, x = s0.x + Math.cos(a) * r, z = s0.z + Math.sin(a) * r; if (ok(x, z, 300)) push(x, z); }
-  const along = (d) => { let lo = 0, hi = cum.length - 1; while (hi - lo > 1) { const m = (lo + hi) >> 1; if (cum[m] <= d) lo = m; else hi = m; }
-    const A = pts[lo], B = pts[hi], sl = cum[hi] - cum[lo] || 1, t = (d - cum[lo]) / sl; return { x: A.x + (B.x - A.x) * t, z: A.z + (B.z - A.z) * t, tx: (B.x - A.x) / sl, tz: (B.z - A.z) / sl }; };
-  const nv = list.length;
-  for (let d = 700; d < length - 300 && list.length - nv < hamlets; d += 1100 + rand() * 1600) {
-    const n = 3 + Math.floor(rand() * 6);
-    for (let i = 0; i < n * 3 && list.length - nv < hamlets; i++) {
-      const p = along(d + rand() * 160), side = rand() < 0.5 ? 1 : -1, off = 15 + rand() * 30;
-      const x = p.x - p.tz * side * off, z = p.z + p.tx * side * off; if (ok(x, z)) push(x, z);
+  const A = corners(ax, az, aRot, aH.hw + pad / 2, aH.hd + pad / 2);
+  const B = corners(bx, bz, bRot, bH.hw + pad / 2, bH.hd + pad / 2);
+  const axes = [
+    [Math.cos(aRot), -Math.sin(aRot)],
+    [Math.sin(aRot), Math.cos(aRot)],
+    [Math.cos(bRot), -Math.sin(bRot)],
+    [Math.sin(bRot), Math.cos(bRot)]
+  ];
+  for (const [ux, uz] of axes) {
+    let minA = Infinity, maxA = -Infinity, minB = Infinity, maxB = -Infinity;
+    for (const [px, pz] of A) {
+      const pr = px * ux + pz * uz;
+      if (pr < minA) minA = pr;
+      if (pr > maxA) maxA = pr;
+    }
+    for (const [px, pz] of B) {
+      const pr = px * ux + pz * uz;
+      if (pr < minB) minB = pr;
+      if (pr > maxB) maxB = pr;
+    }
+    if (maxA < minB || maxB < minA) return false;
+  }
+  return true;
+}
+
+function pickVariant() {
+  const r = rand();
+  if (r < 0.22) return 0;
+  if (r < 0.45) return 1;
+  if (r < 0.7) return 2;
+  if (r < 0.88) return 3;
+  return 4;
+}
+
+export function planChaletPlacements(track, terrain, {
+  village = 42,
+  hamlets = 36,
+  rng = rand
+} = {}) {
+  seed = 4242;
+  const { pts, cum, length } = track;
+  const list = [];
+  const finish = pts[pts.length - 1];
+
+  const nearestRoad = (x, z) => {
+    let best = pts[0], bestDist = Infinity;
+    // subsample for speed; densify near the end
+    const step = Math.max(1, Math.floor(pts.length / 400));
+    for (let i = 0; i < pts.length; i += step) {
+      const p = pts[i];
+      const d = (p.x - x) ** 2 + (p.z - z) ** 2;
+      if (d < bestDist) { bestDist = d; best = p; }
+    }
+    // also always consider the finish
+    const df = (finish.x - x) ** 2 + (finish.z - z) ** 2;
+    if (df < bestDist) best = finish;
+    return best;
+  };
+
+  const facingRoad = (x, z) => {
+    const road = nearestRoad(x, z);
+    return Math.atan2(road.x - x, road.z - z);
+  };
+
+  const okAt = (x, z, rot, variant, minSep, { hero = true } = {}) => {
+    if (hero && (x - finish.x) ** 2 + (z - finish.z) ** 2 < HERO_EXCLUSION_M * HERO_EXCLUSION_M) return false;
+    if (footprintMinDist(x, z, rot, variant.W, variant.D, terrain.distTo) < VEG_CLEARANCE) return false;
+    if (terrain.slopeAt(x, z) > 0.52) return false;
+    if (terrain.waterAt && terrain.waterAt(x, z)) return false;
+    const zone = terrain.classify ? terrain.classify(x, z) : '';
+    if (zone === 'rock' || zone === 'snow') return false;
+    const sep2 = minSep * minSep;
+    for (const other of list) {
+      if ((other.x - x) ** 2 + (other.z - z) ** 2 < sep2) return false;
+      if (footprintsOverlap(x, z, rot, variant.W, variant.D, other.x, other.z, other.rot, other.W, other.D)) return false;
+    }
+    return true;
+  };
+
+  const add = (x, z, rot, variantIdx) => {
+    const variant = VARIANTS[variantIdx];
+    let y = Infinity;
+    for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const p = footprintWorld(x, z, rot, a * variant.W / 2, b * variant.D / 2);
+      y = Math.min(y, terrain.heightAt(p.x, p.z));
+    }
+    list.push({
+      x, z, y: y - 0.1, rot,
+      variant: variantIdx,
+      W: variant.W, D: variant.D,
+      woodShade: rng(),
+      roofShade: rng()
+    });
+    return true;
+  };
+
+  const tryPlace = (x, z, minSep, rotJitter = 0.25) => {
+    const variantIdx = pickVariant();
+    const rot = facingRoad(x, z) + (rng() - 0.5) * rotJitter;
+    if (!okAt(x, z, rot, VARIANTS[variantIdx], minSep)) return false;
+    return add(x, z, rot, variantIdx);
+  };
+
+  // --- Village: a few tight clusters around the finish (Villard-Reculas) ---
+  const clusterSpecs = [
+    { r: 70, spread: 28, n: 7, ang: 0.4 },
+    { r: 95, spread: 32, n: 8, ang: 1.6 },
+    { r: 115, spread: 30, n: 7, ang: 2.6 },
+    { r: 145, spread: 36, n: 8, ang: 3.7 },
+    { r: 175, spread: 40, n: 6, ang: 5.0 },
+    { r: 80, spread: 24, n: 6, ang: 5.6 }
+  ];
+  for (const spec of clusterSpecs) {
+    if (list.length >= village) break;
+    // Nudge the cluster off the road: try a few angles around the hint
+    let cx, cz, found = false;
+    for (let k = 0; k < 14 && !found; k++) {
+      const ang = spec.ang + (k * 0.37) + (rng() - 0.5) * 0.2;
+      cx = finish.x + Math.cos(ang) * spec.r;
+      cz = finish.z + Math.sin(ang) * spec.r;
+      if (terrain.distTo(cx, cz) >= VEG_CLEARANCE + 8) found = true;
+    }
+    if (!found) continue;
+    let placed = 0;
+    for (let attempts = 0; attempts < 80 && placed < spec.n && list.length < village; attempts++) {
+      const a = rng() * Math.PI * 2;
+      const rad = 4 + rng() * spec.spread;
+      if (tryPlace(cx + Math.cos(a) * rad, cz + Math.sin(a) * rad, VILLAGE_MIN_SEP, 0.18)) placed++;
     }
   }
-  // matériaux partagés
-  const mats = {
-    stone: new THREE.MeshStandardMaterial({ map: stoneTex(), roughness: 0.95 }),
-    wood: new THREE.MeshStandardMaterial({ map: logTex(), roughness: 0.85 }),
-    plank: new THREE.MeshStandardMaterial({ map: plankTex(), roughness: 0.85, color: 0xb99a80 }),
-    roof: new THREE.MeshStandardMaterial({ map: roofTex(), roughness: 0.9 }),
-    trim: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }),
-    render: new THREE.MeshStandardMaterial({ map: stoneTex(), color: PALETTE.chalet.render, roughness: 1 }),
-    solar: new THREE.MeshStandardMaterial({ color: PALETTE.chalet.solar, roughness: 0.25, metalness: 0.6 }),
-  };
-  const woodTints = PALETTE.chalet.woodTints.map((c) => new THREE.Color(c)); // miel → bois vieilli
-  const roofTints = PALETTE.chalet.roofTints.map((c) => new THREE.Color(c));            // lauze / ardoise / bardeau
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), one = new THREE.Vector3(1, 1, 1), P = new THREE.Vector3();
-  VARIANTS.forEach((V, vi) => {
-    const items = list.filter((h) => h.v === vi); if (!items.length) return;
-    const parts = chaletParts(V);
-    for (const k in parts) {
-      if (!parts[k]) continue;
-      const its = k === 'solar' ? items.filter((h) => h.solar) : items; if (!its.length) continue;
-      const im = new THREE.InstancedMesh(parts[k], mats[k], its.length);
-      its.forEach((h, i) => {
-        im.setMatrixAt(i, m.compose(P.set(h.x, h.y, h.z), q.setFromAxisAngle(up, h.rot), one));
-        if (k === 'wood' || k === 'plank') im.setColorAt(i, woodTints[Math.floor(h.wood * woodTints.length)]);
-        if (k === 'roof') im.setColorAt(i, roofTints[Math.floor(h.roof * roofTints.length)]);
-      });
-      im.castShadow = k !== 'trim'; im.receiveShadow = true; scene.add(im);
+
+  // Fill remaining village slots with a slightly looser ring
+  for (let attempts = 0; attempts < 2500 && list.length < village; attempts++) {
+    const angle = rng() * Math.PI * 2;
+    const r = 50 + rng() * 200;
+    tryPlace(finish.x + Math.cos(angle) * r, finish.z + Math.sin(angle) * r, VILLAGE_MIN_SEP, 0.3);
+  }
+
+  const villageCount = list.length;
+
+  // Hamlets along the climb, well before the finish
+  for (let dist = 800; dist < length - 500 && list.length - villageCount < hamlets; dist += 900 + rng() * 1100) {
+    let idx = 0;
+    for (let j = 0; j < cum.length; j++) {
+      if (cum[j] >= dist) { idx = j; break; }
     }
-  });
-  terrain.houses.push(...list);
-  return { village: nv, hamlets: list.length - nv };
+    const pt = pts[idx];
+    const nextPt = pts[Math.min(idx + 5, pts.length - 1)];
+    const tx = nextPt.x - pt.x, tz = nextPt.z - pt.z;
+    const tlen = Math.hypot(tx, tz) || 1;
+    const hamletSize = 2 + Math.floor(rng() * 4);
+    let placed = 0;
+    for (let i = 0; i < hamletSize * 5 && placed < hamletSize && list.length - villageCount < hamlets; i++) {
+      const side = rng() < 0.5 ? 1 : -1;
+      const offset = 22 + rng() * 36;
+      const along = (rng() - 0.5) * 18;
+      const x = pt.x - (tz / tlen) * side * offset + (tx / tlen) * along;
+      const z = pt.z + (tx / tlen) * side * offset + (tz / tlen) * along;
+      if (tryPlace(x, z, HAMLET_MIN_SEP, 0.25)) placed++;
+    }
+  }
+
+  return { list, village: villageCount, hamlets: list.length - villageCount };
+}
+
+export function addChalets(scene, track, terrain, opts = {}) {
+  seed = 4242;
+  const { list, village, hamlets } = planChaletPlacements(track, terrain, opts);
+
+  console.log(`Placed ${village} chalets in the finish village`);
+  console.log(`Placed ${hamlets} chalets in hamlets, total: ${list.length}`);
+
+  const materials = {
+    stone: new THREE.MeshStandardMaterial({
+      map: stoneTex(),
+      roughness: 0.9,
+      color: 0xf5f0e8
+    }),
+    wood: new THREE.MeshStandardMaterial({
+      map: woodTex(),
+      roughness: 0.85
+    }),
+    roof: new THREE.MeshStandardMaterial({
+      map: roofTex(),
+      roughness: 0.95,
+      color: 0x2a2a2c
+    }),
+    windows: new THREE.MeshStandardMaterial({
+      color: 0x1a2530,
+      roughness: 0.3,
+      metalness: 0.1
+    })
+  };
+
+  const woodTints = [
+    new THREE.Color(0xd4a76a),
+    new THREE.Color(0xb8956a),
+    new THREE.Color(0x9d7a4a),
+    new THREE.Color(0x8a6a3a)
+  ];
+  const roofTints = [
+    new THREE.Color(0x3a3a3c),
+    new THREE.Color(0x2a2a2c),
+    new THREE.Color(0x1a1a1c)
+  ];
+
+  const variantGeometries = VARIANTS.map((v) => createChaletGeometry(v));
+  const matrix = new THREE.Matrix4();
+  const quat = new THREE.Quaternion();
+  const pos = new THREE.Vector3();
+  const scale = new THREE.Vector3(1, 1, 1);
+  const up = new THREE.Vector3(0, 1, 0);
+
+  for (let vi = 0; vi < VARIANTS.length; vi++) {
+    const instances = list.filter((c) => c.variant === vi);
+    if (!instances.length) continue;
+    const geoms = variantGeometries[vi];
+    for (const partName in geoms) {
+      if (!geoms[partName]) continue;
+      const mesh = new THREE.InstancedMesh(geoms[partName], materials[partName], instances.length);
+      instances.forEach((chalet, i) => {
+        quat.setFromAxisAngle(up, chalet.rot);
+        pos.set(chalet.x, chalet.y, chalet.z);
+        matrix.compose(pos, quat, scale);
+        mesh.setMatrixAt(i, matrix);
+        if (partName === 'wood') {
+          mesh.setColorAt(i, woodTints[Math.floor(chalet.woodShade * woodTints.length)]);
+        } else if (partName === 'roof') {
+          mesh.setColorAt(i, roofTints[Math.floor(chalet.roofShade * roofTints.length)]);
+        }
+      });
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.frustumCulled = true;
+      scene.add(mesh);
+    }
+  }
+
+  if (terrain.houses) terrain.houses.push(...list);
+  if (typeof window !== 'undefined') window._villageChalets = list;
+  return { village, hamlets, list };
 }

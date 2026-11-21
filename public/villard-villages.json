@@ -1,0 +1,38 @@
+[
+  {
+    "name": "Allemond",
+    "lat": 45.1308725,
+    "lon": 6.0408887,
+    "osm_id": 2205371376,
+    "entry_km": 0,
+    "exit_km": 0.4,
+    "pass": 1
+  },
+  {
+    "name": "Le Boulangeard",
+    "lat": 45.1279639,
+    "lon": 6.0473472,
+    "osm_id": 6749142191,
+    "entry_km": 0.39,
+    "exit_km": 1.91,
+    "pass": 1
+  },
+  {
+    "name": "Sardonne",
+    "lat": 45.1196024,
+    "lon": 6.0436606,
+    "osm_id": 7344921490,
+    "entry_km": 3.79,
+    "exit_km": 4.04,
+    "pass": 1
+  },
+  {
+    "name": "Villard-Reculas",
+    "lat": 45.0914971,
+    "lon": 6.0313171,
+    "osm_id": 34055469,
+    "entry_km": 10.57,
+    "exit_km": 10.88,
+    "pass": 1
+  }
+]

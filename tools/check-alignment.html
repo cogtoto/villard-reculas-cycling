@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Terrain Alignment Check</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4; }
+    pre { background: #2d2d2d; padding: 10px; border-left: 3px solid #007acc; }
+    .error { color: #f44747; }
+    .ok { color: #4ec9b0; }
+  </style>
+</head>
+<body>
+  <h1>Terrain Alignment Diagnostic</h1>
+  <div id="output"></div>
+  
+  <script type="module">
+    const output = document.getElementById('output');
+    
+    function log(text, isError = false) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      if (isError) div.className = 'error';
+      output.appendChild(div);
+    }
+    
+    async function main() {
+      // Load GPX
+      const gpxResp = await fetch('/villard-reculas.gpx');
+      const gpxText = await gpxResp.text();
+      
+      const pts = [];
+      const re = /<trkpt\s+([^>]*)>([\s\S]*?)<\/trkpt>/g;
+      let m;
+      while ((m = re.exec(gpxText))) {
+        const lat = parseFloat(/lat="([^"]+)"/.exec(m[1])?.[1]);
+        const lon = parseFloat(/lon="([^"]+)"/.exec(m[1])?.[1]);
+        const e = /<ele>([^<]+)<\/ele>/.exec(m[2]);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          pts.push({ lat, lon, ele: e ? parseFloat(e[1]) : 0 });
+        }
+      }
+      
+      const lat0 = pts.reduce((s, p) => s + p.lat, 0) / pts.length;
+      const lon0 = pts.reduce((s, p) => s + p.lon, 0) / pts.length;
+      const R = 6371000;
+      const k = Math.cos((lat0 * Math.PI) / 180);
+      
+      const local = pts.map(p => ({
+        x: ((p.lon - lon0) * Math.PI / 180) * R * k,
+        y: p.ele,
+        z: -((p.lat - lat0) * Math.PI / 180) * R,
+        lat: p.lat,
+        lon: p.lon
+      }));
+      
+      log(`GPX: ${pts.length} points`);
+      log(`Origin: lat0=${lat0.toFixed(6)}, lon0=${lon0.toFixed(6)}`);
+      log(`\nFirst point (start):`);
+      log(`  Lat/Lon: ${local[0].lat.toFixed(6)}, ${local[0].lon.toFixed(6)}`);
+      log(`  Local: x=${local[0].x.toFixed(1)}, y=${local[0].y.toFixed(1)}, z=${local[0].z.toFixed(1)}`);
+      log(`  Elevation (GPX): ${local[0].y.toFixed(1)} m`);
+      
+      // Load terrain metadata
+      const metaResp = await fetch('/terrain/villard/metadata.json');
+      const metadata = await metaResp.json();
+      
+      log(`\nTerrain bbox:`);
+      log(`  Lat: ${metadata.bbox.minLat} to ${metadata.bbox.maxLat}`);
+      log(`  Lon: ${metadata.bbox.minLon} to ${metadata.bbox.maxLon}`);
+      
+      // Check which chunk contains start point
+      const startLat = local[0].lat;
+      const startLon = local[0].lon;
+      
+      for (const ortho of metadata.orthoimagery) {
+        const inChunk = startLat >= ortho.bbox.minLat && startLat <= ortho.bbox.maxLat &&
+                        startLon >= ortho.bbox.minLon && startLon <= ortho.bbox.maxLon;
+        if (inChunk) {
+          log(`\nStart point is in chunk: ${ortho.bbox.name}`, false);
+          log(`  Chunk bbox: lat ${ortho.bbox.minLat}-${ortho.bbox.maxLat}, lon ${ortho.bbox.minLon}-${ortho.bbox.maxLon}`);
+          
+          // Load this chunk's heightmap
+          const heightResp = await fetch(`/terrain/villard/heightmap-${ortho.bbox.name}.bin`);
+          const heightBuf = await heightResp.arrayBuffer();
+          const heightData = new Int16Array(heightBuf);
+          
+          // Calculate grid position of start point within chunk
+          const nx = metadata.chunks.chunkSizeX;
+          const ny = metadata.chunks.chunkSizeY;
+          
+          const fracLat = (startLat - ortho.bbox.minLat) / (ortho.bbox.maxLat - ortho.bbox.minLat);
+          const fracLon = (startLon - ortho.bbox.minLon) / (ortho.bbox.maxLon - ortho.bbox.minLon);
+          
+          // DEM is row 0 = north, so Y index = (1 - fracLat) * ny
+          const gridX = Math.floor(fracLon * (nx - 1));
+          const gridY = Math.floor((1 - fracLat) * (ny - 1)); // Flip Y
+          
+          const idx = gridY * nx + gridX;
+          const demElevation = heightData[idx];
+          
+          log(`\nChunk grid position:`);
+          log(`  Fraction: lat=${fracLat.toFixed(3)}, lon=${fracLon.toFixed(3)}`);
+          log(`  Grid: X=${gridX}, Y=${gridY} (of ${nx}×${ny})`);
+          log(`  Index: ${idx}`);
+          log(`  DEM elevation: ${demElevation.toFixed(1)} m`);
+          log(`  GPX elevation: ${local[0].y.toFixed(1)} m`);
+          log(`  Difference: ${(demElevation - local[0].y).toFixed(1)} m`);
+          
+          const diff = Math.abs(demElevation - local[0].y);
+          if (diff < 20) {
+            log(`\n✓ GOOD: Elevations match within 20m`, false);
+          } else {
+            log(`\n✗ ERROR: Elevations differ by ${diff.toFixed(1)}m - alignment problem!`, true);
+          }
+          
+          // Sample a few more points along the track
+          log(`\nSampling more points along track:`);
+          for (let i = 100; i < Math.min(500, pts.length); i += 100) {
+            const p = local[i];
+            const pLat = p.lat;
+            const pLon = p.lon;
+            
+            // Find which chunk
+            for (const o of metadata.orthoimagery) {
+              if (pLat >= o.bbox.minLat && pLat <= o.bbox.maxLat &&
+                  pLon >= o.bbox.minLon && o.bbox.maxLon) {
+                const hResp = await fetch(`/terrain/villard/heightmap-${o.bbox.name}.bin`);
+                const hBuf = await hResp.arrayBuffer();
+                const hData = new Int16Array(hBuf);
+                
+                const fLat = (pLat - o.bbox.minLat) / (o.bbox.maxLat - o.bbox.minLat);
+                const fLon = (pLon - o.bbox.minLon) / (o.bbox.maxLon - o.bbox.minLon);
+                const gX = Math.floor(fLon * (nx - 1));
+                const gY = Math.floor((1 - fLat) * (ny - 1));
+                const demEl = hData[gY * nx + gX];
+                
+                log(`  Point ${i}: GPX=${p.y.toFixed(0)}m, DEM=${demEl.toFixed(0)}m, diff=${(demEl - p.y).toFixed(0)}m (chunk ${o.bbox.name})`);
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    main().catch(err => {
+      log(`FATAL ERROR: ${err.message}`, true);
+      console.error(err);
+    });
+  </script>
+</body>
+</html>
