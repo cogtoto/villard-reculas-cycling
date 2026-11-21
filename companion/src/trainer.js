@@ -1,10 +1,26 @@
 // BLE home trainer — parsers & FTMS control adapted from ../velo-virtuel/sensors.js
-import { BleClient } from '@capacitor-community/bluetooth-le';
+import { BleClient, ScanMode } from '@capacitor-community/bluetooth-le';
+import { mergeHrCandidates, isNamedDevice, checkHrPrerequisites } from './hr-sensor.js';
 
-const CPS = '00001818-0000-1000-8000-00805f9b34fb', CPM = '00002a63-0000-1000-8000-00805f9b34fb';
-const FTMS = '00001826-0000-1000-8000-00805f9b34fb', IBD = '00002ad2-0000-1000-8000-00805f9b34fb';
+export const CPS = '00001818-0000-1000-8000-00805f9b34fb', CPM = '00002a63-0000-1000-8000-00805f9b34fb';
+export const FTMS = '00001826-0000-1000-8000-00805f9b34fb', IBD = '00002ad2-0000-1000-8000-00805f9b34fb';
 const FTMS_CP = '00002ad9-0000-1000-8000-00805f9b34fb';
 const bytes = (arr) => new DataView(new Uint8Array(arr).buffer);
+
+export const TRAINER_SCAN_OPTIONS = {
+  services: [FTMS, CPS],
+  optionalServices: [FTMS, CPS],
+  allowDuplicates: false,
+  scanMode: ScanMode.SCAN_MODE_LOW_LATENCY,
+};
+
+/** Bonded-device heuristic: do not dump every paired phone/headset into the trainer list. */
+export function looksLikeTrainer(dev) {
+  const n = (dev?.name && String(dev.name).trim().toLowerCase()) || '';
+  if (!n) return false;
+  return /elite|wahoo|tacx|kickr|direto|suito|kura|neo\b|flux|saris|cycleops|bkool|stages|thinkrider|minoura|kinetic|wattbike|schwinn|hammer|magene|zwift|trainer|indoor|smart\s*bike|d2wr/.test(n);
+}
+
 
 export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {} }) {
   let deviceId = null, control = false, simBusy = false, pendingGrade = null;
@@ -29,16 +45,58 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
     if (watts !== null) onData({ watts, cadence: cadence ?? cad, sensor: 'ftms' });
   }
 
-  async function connect() {
-    const t0 = Date.now();
-    await BleClient.initialize({ androidNeverForLocation: false });
-    
-    // Request device with service filters to show only trainers/power meters
-    const dev = await BleClient.requestDevice({
-      services: [FTMS, CPS], // Filter picker to trainers only
-      optionalServices: [FTMS, CPS]
+  let deviceName = '';
+  let scanning = false;
+
+  async function listKnownDevices() {
+    await checkHrPrerequisites();
+    let connected = [];
+    let bonded = [];
+    try { connected = await BleClient.getConnectedDevices([FTMS, CPS]) || []; }
+    catch (e) { onLog(`[trainer] getConnectedDevices: ${e.message || e}`); }
+    try { bonded = (await BleClient.getBondedDevices() || []).filter(looksLikeTrainer); }
+    catch (e) { onLog(`[trainer] getBondedDevices: ${e.message || e}`); }
+    return mergeHrCandidates({ connected, bonded });
+  }
+
+  async function startScan(onDevice) {
+    await checkHrPrerequisites();
+    try { await BleClient.stopLEScan(); } catch { /* no active scan */ }
+    scanning = true;
+    onLog('[trainer] Scanning for trainers (FTMS / CPS)…');
+    await BleClient.requestLEScan(TRAINER_SCAN_OPTIONS, (result) => {
+      const dev = result?.device;
+      if (isNamedDevice(dev)) onDevice?.(dev);
     });
-    
+  }
+
+  async function stopScan() {
+    scanning = false;
+    try { await BleClient.stopLEScan(); } catch { /* already stopped */ }
+  }
+
+  async function disconnect() {
+    await stopScan();
+    if (deviceId) {
+      const id = deviceId;
+      deviceId = null;
+      control = false;
+      try { await BleClient.disconnect(id); } catch (e) { onLog('disconnect: ' + e.message); }
+    }
+  }
+
+  async function connectTo(id, name) {
+    const t0 = Date.now();
+    await stopScan();
+    await checkHrPrerequisites();
+    if (deviceId && deviceId !== id) {
+      try { await BleClient.disconnect(deviceId); } catch { /* replace previous trainer */ }
+      deviceId = null;
+      control = false;
+    }
+    const dev = { deviceId: id, name: name || id };
+    deviceName = dev.name;
+
     onLog(`[+${Date.now()-t0}ms] Connecting to ${dev.name || dev.deviceId}...`);
     await BleClient.connect(dev.deviceId, () => { deviceId = null; control = false; onDisconnect(); });
     onLog(`[+${Date.now()-t0}ms] Connected. Waiting for service discovery...`);
@@ -175,5 +233,15 @@ export function createTrainer({ onData, onLog = () => {}, onDisconnect = () => {
     } catch (e) { onLog('erg: ' + e.message); } finally { simBusy = false; }
   }
 
-  return { connect, setSimulation, setTargetPower, get connected() { return !!deviceId; } };
+  return {
+    listKnownDevices,
+    startScan,
+    stopScan,
+    connectTo,
+    disconnect,
+    setSimulation,
+    setTargetPower,
+    get connected() { return !!deviceId; },
+    get deviceName() { return deviceName; },
+  };
 }

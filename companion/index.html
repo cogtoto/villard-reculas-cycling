@@ -19,8 +19,20 @@
   </section>
   <section class="card">
     <h2>Home trainer</h2>
-    <button id="ble-btn">Connect HomeTrainer</button>
+    <div id="ble-connected" class="connected-bar" hidden>
+      <div class="connected-line" id="ble-connected-line">Trainer: — Connected</div>
+      <div class="connected-actions">
+        <button type="button" id="ble-change" class="small">Change</button>
+        <button type="button" id="ble-disconnect" class="small secondary">Disconnect</button>
+      </div>
+    </div>
+    <div id="ble-scan-block">
+    <button id="ble-btn">Scan for HomeTrainer</button>
     <div class="status">Trainer: <span id="ble-status" class="off">disconnected</span></div>
+    <p id="ble-hint" class="hint" hidden></p>
+    <button id="ble-settings-btn" class="secondary" hidden>Open settings</button>
+    <div id="ble-list" class="device-list" hidden></div>
+    </div>
     <div class="metrics">
       <div><b id="watts">0</b><small>W</small></div>
       <div><b id="cadence">0</b><small>rpm</small></div>
@@ -31,11 +43,20 @@
   </section>
   <section class="card">
     <h2>Heart rate sensor (optional)</h2>
+    <div id="hr-connected" class="connected-bar" hidden>
+      <div class="connected-line" id="hr-connected-line">HR: — Connected</div>
+      <div class="connected-actions">
+        <button type="button" id="hr-change" class="small">Change</button>
+        <button type="button" id="hr-disconnect" class="small secondary">Disconnect</button>
+      </div>
+    </div>
+    <div id="hr-scan-block">
     <button id="hr-btn">Scan for HR Sensor</button>
     <div class="status">HR: <span id="hr-status" class="off">disconnected</span></div>
     <p id="hr-hint" class="hint">Wear the strap, turn Location on, allow Nearby devices, and disconnect the strap from any watch or other app first.</p>
     <button id="hr-settings-btn" class="secondary" hidden>Open settings</button>
     <div id="hr-list" class="device-list" hidden></div>
+    </div>
     <div class="metrics">
       <div><b id="hr-bpm">--</b><small>bpm</small></div>
     </div>

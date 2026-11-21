@@ -1,6 +1,6 @@
 {
   "name": "velo-virtuel-companion",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,7 @@
     "android:open": "cap open android",
     "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
     "android:run": "npm run android:sync && cap run android",
-    "test": "node src/hr-sensor.test.js"
+    "test": "node src/hr-sensor.test.js && node src/ble-card-view.test.js"
   },
   "dependencies": {
     "@capacitor-community/bluetooth-le": "^7.3.2",

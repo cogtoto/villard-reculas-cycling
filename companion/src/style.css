@@ -25,3 +25,9 @@ button.secondary { margin-top: 8px; background: #3a424c; }
 .device-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .device-list button { text-align: left; background: #2a3138; padding: 10px 12px; font-size: 15px; }
 .device-list button small { display: block; color: #9ad; font-size: 11px; font-weight: 400; margin-top: 2px; }
+
+.connected-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+.connected-bar[hidden], .device-list[hidden], #ble-scan-block[hidden], #hr-scan-block[hidden], .hint[hidden], button[hidden] { display: none !important; }
+.connected-line { font-size: 15px; color: #5d5; font-weight: 600; }
+.connected-actions { display: flex; gap: 8px; }
+button.small { width: auto; padding: 8px 12px; font-size: 13px; }
